@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1f4e79">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Repères 3M">
+<title>Repères IGN – Lot 2</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Connexion -->
+<section id="ecran-connexion" class="ecran" hidden>
+  <div class="carte-connexion">
+    <h1>Repères IGN<br><small>Lot 2 – Ouest et Sud</small></h1>
+    <p class="sous">Vérification des repères géodésiques et de nivellement – Montpellier Méditerranée Métropole</p>
+    <form id="form-connexion">
+      <label>E-mail<input type="email" id="cx-email" autocomplete="username" required></label>
+      <label>Mot de passe<input type="password" id="cx-mdp" autocomplete="current-password" required></label>
+      <button type="submit" class="btn principal">Se connecter</button>
+      <p id="cx-erreur" class="erreur"></p>
+    </form>
+  </div>
+</section>
+
+<!-- Application -->
+<section id="ecran-app" class="ecran" hidden>
+  <header id="barre">
+    <button id="btn-menu" class="icone" aria-label="Menu">☰</button>
+    <div id="progression"><div id="prog-texte">–</div><div class="prog-barre"><span id="prog-rempli"></span></div></div>
+    <button id="btn-liste" class="icone" aria-label="Repères proches">≡</button>
+  </header>
+
+  <div id="carte"></div>
+
+  <div id="filtres">
+    <button class="chip actif" data-type="RBF">▲ RBF</button>
+    <button class="chip actif" data-type="NGF">● NGF</button>
+    <button class="chip" id="chip-terminees">Visites terminées : affichées</button>
+  </div>
+
+  <button id="btn-moi" class="flottant" aria-label="Me localiser">◎</button>
+  <div id="mode-demo" hidden>MODE LOCAL – partage des relevés par fichier (menu ☰)</div>
+
+  <!-- Légende -->
+  <div id="legende">
+    <span><i class="pastille afaire"></i>À faire</span>
+    <span><i class="pastille reserve"></i>Réservé</span>
+    <span><i class="pastille fait"></i>Visite terminée</span>
+    <span><i class="pastille probleme"></i>Introuvable / détruit</span>
+  </div>
+
+  <!-- Fiche repère (panneau bas) -->
+  <div id="fiche" class="panneau" hidden>
+    <div class="poignee"></div>
+    <button class="fermer" data-ferme="fiche">✕</button>
+    <div id="fiche-contenu"></div>
+  </div>
+
+  <!-- Liste des repères proches -->
+  <div id="liste" class="panneau" hidden>
+    <div class="poignee"></div>
+    <button class="fermer" data-ferme="liste">✕</button>
+    <h2>Repères les plus proches</h2>
+    <input type="search" id="recherche" placeholder="Rechercher un nom ou une commune…">
+    <ul id="liste-items"></ul>
+  </div>
+
+  <!-- Menu -->
+  <div id="menu" class="panneau" hidden>
+    <div class="poignee"></div>
+    <button class="fermer" data-ferme="menu">✕</button>
+    <h2>Menu</h2>
+    <p id="menu-user"></p>
+    <label>Nom affiché sur le terrain<input id="menu-nom" placeholder="ex. Jack"></label>
+    <button class="btn" id="btn-mes-reserves">Mes repères réservés</button>
+    <h3>Envoi des photos</h3>
+    <p id="envoi-etat" class="dech"></p>
+    <button class="btn" id="btn-envoyer" hidden>Relancer l'envoi maintenant</button>
+    <h3>Partager avec les collègues et le bureau</h3>
+    <button class="btn principal" id="btn-mail">📤 Partager l'état de l'appli (WhatsApp, mail…)</button>
+    <p class="petit">Crée un fichier avec <b>tout ce que contient ce téléphone</b> : toutes les photos et l'état de toutes les visites, quel que soit le nombre de jours. N'importe quel collègue, même nouveau, l'importe ci-dessous ; envoyez-le aussi au bureau (<b>nicolas.midonnet@siragusa.fr</b>). Au-delà de 18 Mo, plusieurs fichiers sont proposés.</p>
+    <h3>Mettre à jour avec le fichier d'un collègue</h3>
+    <button class="btn" id="btn-importer">📥 Importer un fichier reçu</button>
+    <label class="case-simple"><input type="checkbox" id="imp-photos" checked> Importer aussi ses photos</label>
+    <input type="file" id="input-import" accept=".zip,application/zip,application/octet-stream" multiple hidden>
+    <p id="envoi-local" class="petit"></p>
+    <button class="btn secondaire" id="btn-liberer" hidden>Libérer la place sur le téléphone</button>
+    <h3>Exports pour le livrable</h3>
+    <button class="btn" id="btn-export-geojson">Exporter GeoJSON (couche SIG)</button>
+    <button class="btn" id="btn-export-csv">Exporter CSV (tableur)</button>
+    <h3>Fond de carte</h3>
+    <select id="sel-fond">
+      <option value="plan">Plan IGN</option>
+      <option value="ortho">Photo aérienne IGN</option>
+      <option value="osm">OpenStreetMap</option>
+    </select>
+    <button class="btn secondaire" id="btn-deconnexion">Se déconnecter</button>
+    <p class="petit">Appli de terrain – Cabinet Siragusa · BC 26M108000749</p>
+  </div>
+
+  <div id="toast" hidden></div>
+</section>
+
+<input type="file" id="input-photo" accept="image/*" capture="environment" multiple hidden>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="data/reperes-lot2.js"></script>
+<script src="stockage.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

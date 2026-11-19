@@ -1,5 +1,5 @@
 // Service worker : l'appli s'ouvre même sans réseau ; les tuiles de carte vues sont gardées en cache.
-const VERSION = 'reperes-3m-v10';
+const VERSION = 'reperes-3m-v11';
 const COQUILLE = ['./', 'index.html', 'style.css', 'app.js', 'stockage.js', 'firebase-config.js', 'data/reperes-lot2.js',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/logo-siragusa.png'];
 const TUILES = 'tuiles-v1', MAX_TUILES = 3000;
@@ -34,7 +34,8 @@ self.addEventListener('fetch', e => {
 
   // Fichiers de l'appli et bibliothèques (Leaflet, Firebase) : réseau d'abord, cache si hors ligne
   if (url.origin === location.origin || url.host === 'unpkg.com' || url.host === 'www.gstatic.com') {
-    e.respondWith(fetch(req).then(r => {
+    // no-cache : toujours revalider auprès du serveur (sinon le cache HTTP de GitHub garde l'ancienne version ~10 min)
+    e.respondWith(fetch(req, url.origin === location.origin ? { cache: 'no-cache' } : {}).then(r => {
       if (r.ok) { const copie = r.clone(); caches.open(VERSION).then(c => c.put(req, copie)); }
       return r;
     }).catch(() => caches.match(req).then(h => h || caches.match('index.html'))));

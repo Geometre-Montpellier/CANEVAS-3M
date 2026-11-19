@@ -31,7 +31,16 @@
 
   // ---------------- Démarrage ----------------
   S.init();
-  if (S.demo) $('#mode-demo').hidden = false;
+  if (S.demo) {
+    $('#mode-demo').hidden = false;
+    // Mode local : pas de compte, on demande seulement le prénom (affiché sur les réservations et visites)
+    const em = $('#cx-email'), mdp = $('#cx-mdp');
+    em.type = 'text'; em.autocomplete = 'given-name'; em.placeholder = 'ex. Jack';
+    em.value = localStorage.getItem('nom-terrain') || '';
+    em.closest('label').firstChild.textContent = 'Ton prénom';
+    mdp.required = false; mdp.closest('label').hidden = true;
+    $('#form-connexion button').textContent = 'Commencer';
+  }
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 
   S.onAuth(u => {
@@ -43,6 +52,7 @@
   $('#form-connexion').addEventListener('submit', async (e) => {
     e.preventDefault();
     $('#cx-erreur').textContent = '';
+    if (S.demo) localStorage.setItem('nom-terrain', $('#cx-email').value.trim());
     try { await S.connexion($('#cx-email').value.trim(), $('#cx-mdp').value); }
     catch (err) { $('#cx-erreur').textContent = messageErreur(err); }
   });
@@ -57,7 +67,8 @@
 
   let appDemarree = false;
   function demarrerApp() {
-    $('#menu-user').textContent = 'Connecté : ' + (S.user.email || '') + (S.demo ? ' (démo)' : '');
+    if (S.demo) $('#btn-deconnexion').textContent = 'Changer de prénom';
+    $('#menu-user').textContent = S.demo ? 'Mode local (relevés gardés sur ce téléphone)' : 'Connecté : ' + (S.user.email || '');
     $('#menu-nom').value = localStorage.getItem('nom-terrain') || '';
     if (!appDemarree) { initCarte(); initUI(); appDemarree = true; }
     desabonner = S.ecouter((v) => { visites = v || {}; rafraichir(); });

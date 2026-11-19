@@ -1,5 +1,5 @@
 // Service worker : l'appli s'ouvre même sans réseau ; les tuiles de carte vues sont gardées en cache.
-const VERSION = 'reperes-3m-v8';
+const VERSION = 'reperes-3m-v9';
 const COQUILLE = ['./', 'index.html', 'style.css', 'app.js', 'stockage.js', 'firebase-config.js', 'data/reperes-lot2.js',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 const TUILES = 'tuiles-v1', MAX_TUILES = 3000;

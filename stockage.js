@@ -49,6 +49,7 @@
   const demoEcrire = (o) => localStorage.setItem(LS, JSON.stringify(o));
   let demoCb = null;
   const demoNotifier = () => demoCb && demoCb(demoLire());
+  const journaliser = (v, ligne) => { (v.journal = v.journal || []).push(ligne); };
 
   const S = {
     demo: DEMO,
@@ -95,15 +96,22 @@
     },
 
     // Sans réseau, Firestore garde l'écriture et l'envoie au retour du réseau : on n'attend pas le serveur.
-    async maj(id, patch) {
-      const p = Object.assign({}, patch, { majPar: S.nom(), maj: new Date().toISOString() });
-      if (DEMO) { const o = demoLire(); o[id] = Object.assign(o[id] || {}, p); demoEcrire(o); demoNotifier(); return; }
+    // Chaque modification d'un repère est ajoutée à son journal : { le, par, action, ...détails }.
+    // action : texte lisible (« État : Endommagé », « Visite terminée »…) ; à défaut, la liste des champs modifiés.
+    async maj(id, patch, action, details) {
+      const le = new Date().toISOString();
+      const ligne = Object.assign({ le, par: S.nom(), action: action || ('Modification : ' + Object.keys(patch).join(', ')) }, details || {});
+      const p = Object.assign({}, patch, { majPar: ligne.par, maj: le });
+      if (DEMO) { const o = demoLire(); o[id] = Object.assign(o[id] || {}, p); journaliser(o[id], ligne); demoEcrire(o); demoNotifier(); return; }
+      p.journal = firebase.firestore.FieldValue.arrayUnion(ligne);
       db.collection('visites').doc(id).set(p, { merge: true }).catch(e => alert('Enregistrement refusé : ' + e.message));
     },
 
-    async effacerChamps(id, champs) {
-      if (DEMO) { const o = demoLire(); if (o[id]) champs.forEach(c => delete o[id][c]); demoEcrire(o); demoNotifier(); return; }
-      const p = { maj: new Date().toISOString(), majPar: S.nom() };
+    async effacerChamps(id, champs, action) {
+      const le = new Date().toISOString();
+      const ligne = { le, par: S.nom(), action: action || ('Effacé : ' + champs.join(', ')) };
+      if (DEMO) { const o = demoLire(); o[id] = o[id] || {}; champs.forEach(c => delete o[id][c]); o[id].maj = le; o[id].majPar = ligne.par; journaliser(o[id], ligne); demoEcrire(o); demoNotifier(); return; }
+      const p = { maj: le, majPar: ligne.par, journal: firebase.firestore.FieldValue.arrayUnion(ligne) };
       champs.forEach(c => p[c] = firebase.firestore.FieldValue.delete());
       db.collection('visites').doc(id).set(p, { merge: true }).catch(e => alert('Enregistrement refusé : ' + e.message));
     },
@@ -113,20 +121,24 @@
       const cle = id + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
       const desc = { cle, role: meta.role || 'autre', date: new Date().toISOString(), auteur: S.nom() };
       if (meta.gps) desc.gps = meta.gps;
+      const NOMS = { pres: 'Photo de près', loin: 'Photo de loin', autre: 'Autre photo' };
+      const ligne = Object.assign({ le: desc.date, par: desc.auteur, action: NOMS[desc.role] + ' ajoutée', photo: cle }, meta.ecart != null ? { ecart: meta.ecart } : {});
       await tx(['blobs', 'meta'], 'readwrite', (b, m) => {
         b.put({ cle, blob });
         m.put(Object.assign({ id, taille: blob.size, envoye: DEMO }, desc));
       });
       if (DEMO) {
         const o = demoLire(); o[id] = o[id] || {}; (o[id].photos = o[id].photos || []).push(desc);
-        o[id].maj = desc.date; o[id].majPar = desc.auteur; demoEcrire(o); demoNotifier(); return;
+        o[id].maj = desc.date; o[id].majPar = desc.auteur; journaliser(o[id], ligne); demoEcrire(o); demoNotifier(); return cle;
       }
       // La photo est tout de suite visible des collègues (description) ; l'image suit dès que possible.
       db.collection('visites').doc(id).set({
-        photos: firebase.firestore.FieldValue.arrayUnion(desc), maj: desc.date, majPar: desc.auteur
+        photos: firebase.firestore.FieldValue.arrayUnion(desc), maj: desc.date, majPar: desc.auteur,
+        journal: firebase.firestore.FieldValue.arrayUnion(ligne)
       }, { merge: true }).catch(e => console.warn(e));
       S.onFileChange && S.onFileChange();
       S.envoyerFile();
+      return cle;
     },
 
     _envoi: false,
@@ -156,14 +168,21 @@
     async supprimerPhoto(id, desc) {
       await tx(['blobs', 'meta'], 'readwrite', (b, m) => { b.delete(desc.cle); m.delete(desc.cle); });
       if (S._urls[desc.cle]) delete S._urls[desc.cle];
+      const NOMS = { pres: 'Photo de près', loin: 'Photo de loin', autre: 'Autre photo' };
+      const ligne = { le: new Date().toISOString(), par: S.nom(), action: NOMS[desc.role || 'autre'] + ' supprimée', photo: desc.cle };
       if (DEMO) {
-        const o = demoLire(); if (o[id] && o[id].photos) o[id].photos = o[id].photos.filter(x => x.cle !== desc.cle);
+        const o = demoLire(); o[id] = o[id] || {};
+        if (o[id].photos) o[id].photos = o[id].photos.filter(x => x.cle !== desc.cle);
+        if (o[id].pointages) delete o[id].pointages[desc.cle];
+        o[id].maj = ligne.le; o[id].majPar = ligne.par; journaliser(o[id], ligne);
         demoEcrire(o); demoNotifier(); return;
       }
       const batch = db.batch();
       batch.delete(db.collection('photos').doc(desc.cle));
       batch.set(db.collection('visites').doc(id), {
-        photos: firebase.firestore.FieldValue.arrayRemove(desc), maj: new Date().toISOString(), majPar: S.nom()
+        photos: firebase.firestore.FieldValue.arrayRemove(desc), maj: ligne.le, majPar: ligne.par,
+        journal: firebase.firestore.FieldValue.arrayUnion(ligne),
+        pointages: { [desc.cle]: firebase.firestore.FieldValue.delete() }
       }, { merge: true });
       batch.commit().catch(e => alert('Suppression refusée : ' + e.message));
     },
@@ -237,7 +256,14 @@
         for (const p of (v.photos || [])) if (!photos.some(x => x.cle === p.cle)) photos.push(p);
         // On complète ce qui manque ; si les deux ont renseigné un champ, la saisie la plus récente gagne.
         const plusRecente = String(v.maj || '') > String(a.maj || '');
-        const fusion = Object.assign({}, plusRecente ? a : v, plusRecente ? v : a, { photos });
+        // Journal des modifications : réuni (sans doublon) ; pointages des photos : réunis (le plus récent gagne)
+        const journal = [...(a.journal || [])];
+        for (const h of (v.journal || [])) if (!journal.some(x => x.le === h.le && x.action === h.action && x.par === h.par)) journal.push(h);
+        journal.sort((x, y) => String(x.le).localeCompare(String(y.le)));
+        const pointages = Object.assign({}, plusRecente ? a.pointages : v.pointages, plusRecente ? v.pointages : a.pointages);
+        for (const c of Object.keys(pointages)) if (!photos.some(p => p.cle === c)) delete pointages[c];
+        const fusion = Object.assign({}, plusRecente ? a : v, plusRecente ? v : a, { photos },
+          journal.length ? { journal } : {}, Object.keys(pointages).length ? { pointages } : {});
         if (JSON.stringify(fusion) === JSON.stringify(a)) continue;
         nbVisites++;
         if (DEMO) locales[id] = fusion;

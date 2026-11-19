@@ -198,7 +198,11 @@
     const photos = (v.photos || []);
     // Les photos sont sur le téléphone qui les a prises : on affiche celles présentes ici
     const urls = {};
-    for (const p of photos) if (p.cle) urls[p.cle] = await S.urlPhoto(p.cle);
+    for (const p of photos) if (p.cle) {
+      urls[p.cle] = await S.urlPhoto(p.cle);
+      const pt = (v.pointages || {})[p.cle];
+      if (urls[p.cle] && pt) try { urls[p.cle] = await urlMarquee(urls[p.cle], pt); } catch (e) { }
+    }
     if (ouvert !== id) return;   // une autre fiche a été ouverte entre-temps
     const precisionPos = r.t === 'NGF' ? 'Position IGN approchée (~10 m) : cherchez l\'édifice décrit.' : '';
 
@@ -213,7 +217,7 @@
     const indexees = photos.map((p, i) => Object.assign({ i }, p));
     const parRole = (role) => indexees.filter(p => (p.role || 'autre') === role);
     const vignette = (p) => urls[p.cle]
-      ? `<figure><img src="${urls[p.cle]}" data-i="${p.i}" alt=""><figcaption>${esc(p.auteur || '')} · ${fmtDate(p.date)}</figcaption></figure>`
+      ? `<figure><img src="${urls[p.cle]}" data-i="${p.i}" alt=""><figcaption>${(v.pointages || {})[p.cle] ? '📍 ' : ''}${p.gps && distance(p.gps, r) > ECART_ALERTE ? `⚠️ prise à ${fmtDist(distance(p.gps, r))} · ` : ''}${esc(p.auteur || '')} · ${fmtDate(p.date)}</figcaption></figure>`
       : `<figure class="ailleurs" data-i="${p.i}"><div class="photo-absente">📱<br>sur le téléphone de ${esc(p.auteur || '?')}</div><figcaption>${fmtDate(p.date)}</figcaption></figure>`;
     const emplacement = (role) => {
       const ph = parRole(role).slice(-1)[0];
@@ -270,6 +274,8 @@
         <input type="checkbox" id="f-terminee" ${terminee ? 'checked' : ''}>
         <span>Visite terminée</span>
       </label>
+      ${(v.journal || []).length ? `<details class="historique"><summary>Journal des modifications (${v.journal.length})</summary><ul>${[...v.journal].reverse().map(h =>
+        `<li>${fmtDate(h.le)} · <b>${esc(h.par || '?')}</b> · ${esc(h.action)}${h.ecart != null ? ` <span class="${h.ecart > ECART_ALERTE ? 'alerte' : ''}">(à ${fmtDist(h.ecart)} du repère)</span>` : ''}</li>`).join('')}</ul></details>` : ''}
       ${v.maj ? `<p class="petit">Dernière modification : ${esc(v.majPar || '')} – ${fmtDate(v.maj)}</p>` : ''}
     `;
     $('#fiche').hidden = false;
@@ -277,8 +283,8 @@
     majDistanceFiche();
 
     const on = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
-    on('#b-reserver', () => S.maj(id, { statut: 'reserve', reservePar: moi, reserveLe: new Date().toISOString() }).then(() => toast('Repère réservé')));
-    on('#b-liberer', () => S.effacerChamps(id, ['statut', 'reservePar', 'reserveLe']).then(() => toast('Réservation libérée')));
+    on('#b-reserver', () => S.maj(id, { statut: 'reserve', reservePar: moi, reserveLe: new Date().toISOString() }, 'Réservé').then(() => toast('Repère réservé')));
+    on('#b-liberer', () => S.effacerChamps(id, ['statut', 'reservePar', 'reserveLe'], 'Réservation libérée' + (v.reservePar && v.reservePar !== moi ? ' (était à ' + v.reservePar + ')' : '')).then(() => toast('Réservation libérée')));
     document.querySelectorAll('#fiche .photo-ajout').forEach(b => b.onclick = () => {
       const inp = $('#input-photo');
       inp.dataset.id = id; inp.dataset.role = b.dataset.role;
@@ -287,8 +293,11 @@
     });
     document.querySelectorAll('#fiche img[data-i], #fiche .ailleurs[data-i]').forEach(el => el.onclick = () => voirPhoto(id, +el.dataset.i));
     // Enregistrement automatique de l'état et du commentaire
-    $('#f-etat').onchange = () => S.maj(id, { etat: $('#f-etat').value });
-    $('#f-comm').onblur = () => { const c = $('#f-comm').value.trim(); if (c !== (v.commentaire || '')) S.maj(id, { commentaire: c }); };
+    $('#f-etat').onchange = () => S.maj(id, { etat: $('#f-etat').value }, 'État : ' + (ETAT_LIB[$('#f-etat').value] || '—') + (v.etat ? ' (avant : ' + (ETAT_LIB[v.etat] || v.etat) + ')' : ''));
+    $('#f-comm').onblur = () => {
+      const c = $('#f-comm').value.trim();
+      if (c !== (v.commentaire || '')) S.maj(id, { commentaire: c }, 'Commentaire : « ' + (c.length > 80 ? c.slice(0, 80) + '…' : c) + ' »');
+    };
     $('#f-terminee').onchange = (e) => e.target.checked ? terminer(id, e.target) : rouvrir(id, e.target);
   }
 
@@ -307,15 +316,16 @@
     if (!etat) { annuler('Indiquez l\'état du repère'); $('#f-etat').focus(); return; }
     if (manque.length && !ETATS_SANS_PHOTO.includes(etat)) { annuler('Il manque : ' + manque.map(r => ROLES[r].toLowerCase()).join(' et ')); return; }
     const patch = { statut: 'fait', etat, commentaire: $('#f-comm').value.trim(), visitePar: S.nom(), visiteLe: new Date().toISOString() };
-    if (maPos) patch.gps = maPos;
-    await S.maj(id, patch);
+    const details = {};
+    if (maPos) { patch.gps = maPos; details.ecart = Math.round(distance(maPos, PAR_ID[id])); details.gps = maPos; }
+    await S.maj(id, patch, '✔ Visite terminée – ' + (ETAT_LIB[etat] || etat), details);
     toast('Visite terminée ✔');
     $('#fiche').hidden = true; ouvert = null;   // retour à la carte
   }
 
   async function rouvrir(id, caseEl) {
     if (!confirm('Rouvrir cette visite ? Les photos et le commentaire sont conservés.')) { caseEl.checked = true; return; }
-    await S.effacerChamps(id, ['statut', 'visitePar', 'visiteLe']);
+    await S.effacerChamps(id, ['statut', 'visitePar', 'visiteLe'], '↺ Visite rouverte');
     toast('Visite rouverte');
   }
 
@@ -330,20 +340,102 @@
     if (role !== 'autre') {
       for (const p of ((visites[id] || {}).photos || []).filter(p => p.role === role)) await S.supprimerPhoto(id, p);
     }
+    const nouvelles = [];
     for (const f of (role === 'autre' ? fichiers : fichiers.slice(0, 1))) {
       try {
         const blob = await compresser(f);
-        const meta = Object.assign({ role }, maPos ? { gps: maPos } : {});
-        await S.ajouterPhoto(id, blob, meta);
+        const meta = Object.assign({ role }, maPos ? { gps: maPos, ecart: Math.round(distance(maPos, PAR_ID[id])) } : {});
+        const cle = await S.ajouterPhoto(id, blob, meta);
+        if (cle) nouvelles.push(cle);
       } catch (err) { console.error(err); toast('Photo non enregistrée : ' + err.message); }
     }
     // Un repère « à faire » sur lequel on prend une photo passe en « réservé » pour éviter un doublon de déplacement
     const v = visites[id];
-    if (!v || !v.statut) S.maj(id, { statut: 'reserve', reservePar: S.nom(), reserveLe: new Date().toISOString() });
+    if (!v || !v.statut) S.maj(id, { statut: 'reserve', reservePar: S.nom(), reserveLe: new Date().toISOString() }, 'Réservé (photo prise)');
     afficherFiche(id);
     majEnvoi();
     toast(ROLES[role] + (S.demo ? ' enregistrée' : ' enregistrée, envoi automatique'));
+    // Alerte (sans bloquer) si le téléphone est à plus de 100 m du repère
+    const ecart = maPos ? distance(maPos, PAR_ID[id]) : null;
+    if (ecart != null && ecart > ECART_ALERTE) {
+      await alerteEcart(`Attention : tu es à ${fmtDist(ecart)} de « ${PAR_ID[id].n} ».\nVérifie que c'est bien ce repère que tu photographies. La photo est enregistrée.`);
+    }
+    // Proposer de pointer le repère sur chaque nouvelle photo
+    for (const cle of nouvelles) await pointer(id, cle, true);
   });
+
+  const ECART_ALERTE = 100;   // m
+  function alerteEcart(texte) {
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+    return new Promise(ok => {
+      const d = document.createElement('div');
+      d.className = 'alerte-ecart';
+      d.innerHTML = `<div><p>⚠️</p><p class="txt"></p><button class="btn principal">Compris</button></div>`;
+      d.querySelector('.txt').textContent = texte;
+      d.querySelector('button').onclick = () => { d.remove(); ok(); };
+      document.body.appendChild(d);
+    });
+  }
+
+  // ---------------- Pointage du repère sur une photo ----------------
+  // Position enregistrée en fraction de la largeur / hauteur (0..1) dans visites[id].pointages[cle].
+  // La photo d'origine n'est pas modifiée : le rond rouge est dessiné à l'affichage (fiche, fiches de visite).
+  function pointer(id, cle, apresPrise) {
+    return new Promise(async (ok) => {
+      const url = await S.urlPhoto(cle); if (!url) return ok();
+      const anc = ((visites[id] || {}).pointages || {})[cle];
+      let pt = anc ? { x: anc.x, y: anc.y } : null;
+      const d = document.createElement('div');
+      d.className = 'visionneuse pointage';
+      d.innerHTML = `<div class="pt-consigne">📍 Touche le repère sur la photo</div>
+        <div class="pt-zone"><div class="pt-cadre"><img src="${url}" alt=""><i class="pt-rond" hidden></i></div></div>
+        <div class="vis-barre">
+          <button class="btn secondaire" id="pt-passer">${apresPrise ? 'Plus tard' : 'Annuler'}</button>
+          ${anc ? '<button class="btn secondaire" id="pt-effacer">Effacer le point</button>' : ''}
+          <button class="btn principal" id="pt-ok" ${pt ? '' : 'disabled'}>Valider</button></div>`;
+      document.body.appendChild(d);
+      const img = d.querySelector('img'), rond = d.querySelector('.pt-rond'), okBtn = d.querySelector('#pt-ok');
+      const placer = () => { if (!pt) return; rond.hidden = false; rond.style.left = (pt.x * 100) + '%'; rond.style.top = (pt.y * 100) + '%'; };
+      img.onload = placer;
+      img.onclick = (e) => {
+        const b = img.getBoundingClientRect();
+        pt = { x: +((e.clientX - b.left) / b.width).toFixed(4), y: +((e.clientY - b.top) / b.height).toFixed(4) };
+        placer(); okBtn.disabled = false;
+      };
+      const fin = () => { d.remove(); ok(); };
+      d.querySelector('#pt-passer').onclick = fin;
+      const eff = d.querySelector('#pt-effacer');
+      if (eff) eff.onclick = async () => {
+        const p = Object.assign({}, (visites[id] || {}).pointages); delete p[cle];
+        await S.maj(id, { pointages: p }, 'Pointage effacé sur la ' + nomPhoto(id, cle)); toast('Point effacé'); fin();
+      };
+      okBtn.onclick = async () => {
+        await S.maj(id, { pointages: Object.assign({}, (visites[id] || {}).pointages, { [cle]: pt }) }, (anc ? 'Repère repointé' : 'Repère pointé') + ' sur la ' + nomPhoto(id, cle));
+        toast('Repère pointé ✔'); fin();
+      };
+    });
+  }
+
+  const nomPhoto = (id, cle) => {
+    const p = ((visites[id] || {}).photos || []).find(x => x.cle === cle);
+    return ({ pres: 'photo de près', loin: 'photo de loin' })[p && p.role] || 'autre photo';
+  };
+
+  // Image avec le rond rouge dessiné dessus (mise en cache)
+  const cacheMarquees = {};
+  async function urlMarquee(url, pt) {
+    const k = url + '|' + pt.x + '|' + pt.y;
+    if (cacheMarquees[k]) return cacheMarquees[k];
+    const img = await new Promise((ok, ko) => { const i = new Image(); i.onload = () => ok(i); i.onerror = ko; i.src = url; });
+    const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+    const m = Math.min(c.width, c.height), r = m * 0.05;
+    g.lineWidth = Math.max(3, m * 0.012);
+    g.strokeStyle = 'rgba(255,255,255,.9)'; g.beginPath(); g.arc(pt.x * c.width, pt.y * c.height, r + g.lineWidth, 0, 2 * Math.PI); g.stroke();
+    g.strokeStyle = '#e00000'; g.beginPath(); g.arc(pt.x * c.width, pt.y * c.height, r, 0, 2 * Math.PI); g.stroke();
+    const b = await new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.85));
+    return (cacheMarquees[k] = URL.createObjectURL(b));
+  }
 
   // Réduit la photo à 1600 px puis baisse la qualité jusqu'à tenir sous ~650 Ko
   // (limite Firestore : 1 Mo par document, et le base64 ajoute un tiers).
@@ -378,16 +470,21 @@
 
   async function voirPhoto(id, i) {
     const p = ((visites[id] || {}).photos || [])[i]; if (!p) return;
-    const url = p.cle ? await S.urlPhoto(p.cle) : null;
+    let url = p.cle ? await S.urlPhoto(p.cle) : null;
+    const pt = ((visites[id] || {}).pointages || {})[p.cle];
+    if (url && pt) try { url = await urlMarquee(url, pt); } catch (e) { }
     const d = document.createElement('div');
     d.className = 'visionneuse';
     d.innerHTML = `${url ? `<img src="${url}" alt="">` : `<div class="vis-absente">⏳ Photo pas encore envoyée par le téléphone de ${esc(p.auteur || '?')}.<br>Elle arrivera dès qu'il aura du réseau.</div>`}
       <div class="vis-barre">
       <span>${ROLES[p.role || 'autre']} · ${esc(p.auteur || '')} · ${fmtDate(p.date)}</span>
       <button class="btn secondaire" id="vis-suppr">Supprimer</button>
+      ${url ? `<button class="btn" id="vis-pointer">📍 ${pt ? 'Repointer' : 'Pointer le repère'}</button>` : ''}
       <button class="btn" id="vis-fermer">Fermer</button></div>`;
     document.body.appendChild(d);
     d.querySelector('#vis-fermer').onclick = () => d.remove();
+    const bp = d.querySelector('#vis-pointer');
+    if (bp) bp.onclick = async () => { d.remove(); await pointer(id, p.cle, false); };
     const img = d.querySelector('img'); if (img) img.onclick = () => d.remove();
     d.querySelector('#vis-suppr').onclick = async () => {
       if (!confirm('Supprimer définitivement cette photo ?')) return;
@@ -512,6 +609,8 @@
         etat_constate: ETAT_LIB[v.etat] || '', commentaire: v.commentaire || '',
         visite_par: v.visitePar || '', date_visite: v.visiteLe || '',
         gps_visite_lat: v.gps ? v.gps.lat : '', gps_visite_lon: v.gps ? v.gps.lon : '', gps_precision_m: v.gps ? v.gps.acc : '',
+        ecart_gps_ign_m: v.gps ? Math.round(distance(v.gps, r)) : '',
+        journal: (v.journal || []).map(h => `${fmtDate(h.le)} ${h.par} : ${h.action}`).join(' | '),
         nb_photos: (v.photos || []).length,
         photo_pres: lien((v.photos || []).filter(p => p.role === 'pres')),
         photo_loin: lien((v.photos || []).filter(p => p.role === 'loin')),

@@ -51,6 +51,21 @@
   const demoNotifier = () => demoCb && demoCb(demoLire());
   const journaliser = (v, ligne) => { (v.journal = v.journal || []).push(ligne); };
 
+  // Fusion de deux versions d'une même visite (a = ici, v = reçue) :
+  // photos et journal réunis sans doublon ; pour les autres champs, la saisie la plus récente gagne.
+  function fusionner(a, v) {
+    const photos = [...(a.photos || [])];
+    for (const p of (v.photos || [])) if (!photos.some(x => x.cle === p.cle)) photos.push(p);
+    const plusRecente = String(v.maj || '') > String(a.maj || '');
+    const journal = [...(a.journal || [])];
+    for (const h of (v.journal || [])) if (!journal.some(x => x.le === h.le && x.action === h.action && x.par === h.par)) journal.push(h);
+    journal.sort((x, y) => String(x.le).localeCompare(String(y.le)));
+    const pointages = Object.assign({}, plusRecente ? a.pointages : v.pointages, plusRecente ? v.pointages : a.pointages);
+    for (const c of Object.keys(pointages)) if (!photos.some(p => p.cle === c)) delete pointages[c];
+    return Object.assign({}, plusRecente ? a : v, plusRecente ? v : a, { photos },
+      journal.length ? { journal } : {}, Object.keys(pointages).length ? { pointages } : {});
+  }
+
   const S = {
     demo: DEMO,
     get user() { return user; },
@@ -90,8 +105,13 @@
 
     ecouter(cb) {
       if (DEMO) { demoCb = cb; demoNotifier(); return () => { demoCb = null; }; }
+      let premier = true;
       return db.collection('visites').onSnapshot(snap => {
         const o = {}; snap.forEach(d => { o[d.id] = d.data(); }); S._visitesCourantes = o; cb(o);
+        if (premier && !snap.metadata.fromCache) {
+          premier = false;
+          S.migrerLocal(o).then(n => { if (n && S.onMigre) S.onMigre(n); }).catch(e => console.warn('migration', e));
+        }
       }, err => { console.error(err); alert('Lecture des données impossible : ' + err.message); });
     },
 
@@ -252,18 +272,7 @@
       // 1. Visites
       for (const [id, v] of Object.entries(man.visites || {})) {
         const a = actuelles[id] || {};
-        const photos = [...(a.photos || [])];
-        for (const p of (v.photos || [])) if (!photos.some(x => x.cle === p.cle)) photos.push(p);
-        // On complète ce qui manque ; si les deux ont renseigné un champ, la saisie la plus récente gagne.
-        const plusRecente = String(v.maj || '') > String(a.maj || '');
-        // Journal des modifications : réuni (sans doublon) ; pointages des photos : réunis (le plus récent gagne)
-        const journal = [...(a.journal || [])];
-        for (const h of (v.journal || [])) if (!journal.some(x => x.le === h.le && x.action === h.action && x.par === h.par)) journal.push(h);
-        journal.sort((x, y) => String(x.le).localeCompare(String(y.le)));
-        const pointages = Object.assign({}, plusRecente ? a.pointages : v.pointages, plusRecente ? v.pointages : a.pointages);
-        for (const c of Object.keys(pointages)) if (!photos.some(p => p.cle === c)) delete pointages[c];
-        const fusion = Object.assign({}, plusRecente ? a : v, plusRecente ? v : a, { photos },
-          journal.length ? { journal } : {}, Object.keys(pointages).length ? { pointages } : {});
+        const fusion = fusionner(a, v);
         if (JSON.stringify(fusion) === JSON.stringify(a)) continue;
         nbVisites++;
         if (DEMO) locales[id] = fusion;
@@ -279,12 +288,32 @@
           await tx(['blobs', 'meta'], 'readwrite', (b, m) => {
             b.put({ cle: p.cle, blob });
             m.put({ cle: p.cle, id: p.id, role: p.role, date: p.date, auteur: p.auteur, gps: p.gps, taille: blob.size,
-              envoye: true, exporte: new Date().toISOString(), importe: true });
+              envoye: DEMO, exporte: new Date().toISOString(), importe: true });   // en ligne : on l'envoie aussi à Firebase
           });
           nbPhotos++;
         }
       }
+      if (!DEMO && nbPhotos) S.envoyerFile();
       return { auteur: man.auteur, date: man.date, nbVisites, nbPhotos, partie: man.partie, parties: man.parties };
+    },
+
+    // Passage du mode local à Firebase : les relevés déjà faits sur ce téléphone (mode local) sont envoyés une fois.
+    async migrerLocal(enLigne) {
+      if (DEMO || localStorage.getItem('migre-firebase')) return 0;
+      const locales = demoLire();
+      let n = 0;
+      for (const [id, v] of Object.entries(locales)) {
+        const a = enLigne[id] || {};
+        const fusion = fusionner(a, v);
+        if (JSON.stringify(fusion) === JSON.stringify(a)) continue;
+        db.collection('visites').doc(id).set(fusion, { merge: true }).catch(e => console.warn(e));
+        n++;
+      }
+      const metas = await metaToutes();
+      await tx(['meta'], 'readwrite', (m) => { metas.forEach(o => { if (o.envoye) { o.envoye = false; m.put(o); } }); });
+      localStorage.setItem('migre-firebase', new Date().toISOString());
+      S.envoyerFile();
+      return n;
     },
 
     async marquerExportees(cles) {

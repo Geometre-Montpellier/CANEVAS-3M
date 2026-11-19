@@ -18,7 +18,7 @@ button, input, select, textarea { font: inherit; }
 .carte-connexion h1 small { font-size: 1rem; color: var(--gris); font-weight: 500; }
 .sous { color: var(--gris); font-size: .9rem; margin: 0 0 18px; }
 label { display: block; font-size: .85rem; color: var(--gris); margin: 10px 0; }
-label input, label select, label textarea, #recherche, #sel-fond { display: block; width: 100%; margin-top: 4px; padding: 11px 12px; border: 1px solid var(--bord); border-radius: 10px; font-size: 16px; color: var(--texte); background: #fff; }
+label input, label select, label textarea, #recherche, #sel-fond, #sel-theme { display: block; width: 100%; margin-top: 4px; padding: 11px 12px; border: 1px solid var(--bord); border-radius: 10px; font-size: 16px; color: var(--texte); background: #fff; }
 .erreur { color: var(--probleme); min-height: 1.2em; font-size: .9rem; }
 
 /* Boutons */
@@ -132,9 +132,13 @@ details.ign summary { cursor: pointer; font-weight: 600; color: var(--bleu); }
 
 /* Pointage du repère sur la photo */
 .pointage .pt-consigne { color: #fff; text-align: center; padding: calc(12px + env(safe-area-inset-top, 0px)) 12px 8px; font-size: 1rem; font-weight: 600; }
-.pt-zone { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 0 8px; }
+.pt-zone { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 0 6px; }
 .pt-cadre { position: relative; display: inline-block; line-height: 0; }
-.pt-cadre img { max-width: 100%; max-height: calc(100vh - 150px); width: auto; height: auto; object-fit: initial; flex: none; cursor: crosshair; }
+.pt-taille { flex: none; width: 40px; align-self: stretch; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #fff; }
+.pt-taille span:first-child { font-size: 1.6rem; color: #e00000; line-height: 1; }
+.pt-taille span:last-child { font-size: 1.6rem; color: #e00000; line-height: .5; }
+.pt-taille input { writing-mode: vertical-lr; direction: rtl; width: 36px; height: min(60vh, 340px); accent-color: #e00000; margin: 0; }
+.pt-cadre img { max-width: calc(100vw - 70px); max-height: calc(100vh - 150px); width: auto; height: auto; object-fit: initial; flex: none; cursor: crosshair; }
 .pt-rond { position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px; border: 4px solid #e00000; border-radius: 50%; box-shadow: 0 0 0 2px rgba(255,255,255,.9); pointer-events: none; }
 
 /* Alerte d'écart GPS */
@@ -151,3 +155,57 @@ details.ign summary { cursor: pointer; font-weight: 600; color: var(--bleu); }
 
 #toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(90px + var(--sab)); z-index: 4000; background: #1d2330; color: #fff; padding: 10px 16px; border-radius: 20px; font-size: .9rem; max-width: 90vw; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,.3); }
 .leaflet-control-attribution { font-size: 9px; }
+
+/* ================= Mode sombre (html[data-theme=dark], réglé par app.js) ================= */
+:root[data-theme="dark"] {
+  --fond: #0f141b; --texte: #e6e9ee; --gris: #9aa4b2; --bord: #2c3542; --bleu-clair: #172433;
+  --carte-fond: #1a212b; color-scheme: dark;
+}
+[data-theme="dark"] body { background: var(--fond); }
+[data-theme="dark"] #barre { background: #16263a; }
+[data-theme="dark"] #bandeau { background: #e9edf2; }
+[data-theme="dark"] #ecran-connexion { background: linear-gradient(160deg, #0b1724, #16263a); }
+[data-theme="dark"] .carte-connexion, [data-theme="dark"] .panneau, [data-theme="dark"] .alerte-ecart > div { background: var(--carte-fond); color: var(--texte); }
+[data-theme="dark"] .carte-connexion h1, [data-theme="dark"] .panneau h3, [data-theme="dark"] details.ign summary,
+[data-theme="dark"] .empl-titre, [data-theme="dark"] #liste-items li span { color: #8cbcf0; }
+[data-theme="dark"] .btn, [data-theme="dark"] label input, [data-theme="dark"] label select, [data-theme="dark"] label textarea,
+[data-theme="dark"] #recherche, [data-theme="dark"] #sel-fond, [data-theme="dark"] #sel-theme { background: #232b36; color: var(--texte); border-color: var(--bord); }
+[data-theme="dark"] .btn.principal, [data-theme="dark"] .btn.fiche-ign { color: #fff; }
+[data-theme="dark"] .btn.fiche-ign, [data-theme="dark"] #form-connexion .btn.principal { background: #2b5f93; border-color: #2b5f93; }
+[data-theme="dark"] .btn.secondaire { color: #ff8f8f; border-color: #5a2a2a; }
+[data-theme="dark"] .chip { background: rgba(26,33,43,.95); color: var(--texte); border-color: var(--bord); }
+[data-theme="dark"] .chip.actif { background: #2b5f93; border-color: #2b5f93; color: #fff; }
+[data-theme="dark"] #legende, [data-theme="dark"] .flottant { background: rgba(26,33,43,.95); color: var(--texte); }
+[data-theme="dark"] .flottant.actif { color: #6aa8ff; }
+[data-theme="dark"] #mode-demo { background: #3a2f0a; color: #ffe08a; border-color: #6b5512; }
+[data-theme="dark"] .fermer { background: #2a323d; color: var(--texte); }
+[data-theme="dark"] .poignee { background: #3a4452; }
+[data-theme="dark"] .badge { background: #1d3550; color: #9cc8f5; }
+[data-theme="dark"] .badge.NGF { background: #2d2140; color: #c8a8f0; }
+[data-theme="dark"] .statut.s-afaire { background: #222a35; color: var(--gris); }
+[data-theme="dark"] .statut.s-reserve, [data-theme="dark"] .dech { background: #3a2a10; color: #ffc266; }
+[data-theme="dark"] .statut.s-fait { background: #12301f; color: #7ee2a3; }
+[data-theme="dark"] .statut.s-probleme { background: #3a1717; color: #ff9b9b; }
+[data-theme="dark"] details.ign, [data-theme="dark"] .photo-absente { background: #1f2731; }
+[data-theme="dark"] .emplacement, [data-theme="dark"] .photo-ajout { border-color: #3f6f9f; background: var(--bleu-clair); color: #9cc8f5; }
+[data-theme="dark"] .emplacement.rempli { border-color: var(--fait); background: #12301f; }
+[data-theme="dark"] .emplacement.rempli .empl-titre, [data-theme="dark"] .case-terminee.cochee { color: #7ee2a3; }
+[data-theme="dark"] .case-terminee { border-color: var(--bord); color: var(--texte); }
+[data-theme="dark"] .case-terminee.cochee { background: #12301f; border-color: var(--fait); }
+[data-theme="dark"] #liste-items li { border-bottom-color: #2a323d; }
+[data-theme="dark"] .alerte { color: #ff8f8f; }
+[data-theme="dark"] .leaflet-container { background: #1b2027; }
+[data-theme="dark"] .leaflet-bar a { background: #232b36; color: var(--texte); border-color: var(--bord); }
+[data-theme="dark"] .leaflet-control-attribution { background: rgba(26,33,43,.8) !important; color: var(--gris); }
+[data-theme="dark"] .leaflet-control-attribution a { color: #8cbcf0; }
+/* Fonds plan (IGN / OSM) assombris ; la photo aérienne reste naturelle */
+[data-theme="dark"] #carte:not([data-fond="ortho"]) .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.8); }
+/* Infos de terrain (boutons à choix unique) */
+.champ { margin: 10px 0; }
+.champ-titre { font-size: .85rem; color: var(--gris); margin-bottom: 4px; }
+.choix { display: flex; flex-wrap: wrap; gap: 6px; }
+.choix-btn { flex: 1 1 auto; min-height: 40px; padding: 8px 10px; border: 1px solid var(--bord); border-radius: 10px; background: #fff; color: var(--texte); font-size: .88rem; cursor: pointer; }
+.choix-btn.actif { background: var(--bleu); border-color: var(--bleu); color: #fff; font-weight: 600; }
+[data-theme="dark"] .choix-btn { background: #232b36; }
+[data-theme="dark"] .choix-btn.actif { background: #2b5f93; border-color: #2b5f93; }
+.visionneuse.pointage { background: #000; }

@@ -12,6 +12,14 @@
     ['inaccessible', 'Inaccessible (propriété privée, travaux…)']
   ];
   const ETAT_LIB = Object.fromEntries(ETATS);
+  // Infos de terrain en un geste (boutons à choix unique ; retoucher le bouton choisi l'annule)
+  const CHAMPS = [
+    { cle: 'ciel', titre: 'Ciel pour le GNSS', choix: [['degage', 'Dégagé'], ['partiel', 'Masques partiels'], ['masque', 'Masqué']] },
+    { cle: 'acces', titre: 'Accès', choix: [['libre', 'Libre'], ['prive', 'Privé'], ['cle', 'Clé / gardien'], ['dangereux', 'Circulation dangereuse']] },
+    { cle: 'conforme', titre: 'Conforme à la description IGN', choix: [['oui', 'Oui'], ['non', 'Non']] },
+    { cle: 'menace', titre: 'Menace à proximité', choix: [['aucune', 'Aucune'], ['chantier', 'Chantier'], ['demolition', 'Démolition / aménagement']] }
+  ];
+  const libChamp = (c, v) => ((c.choix.find(x => x[0] === v) || [])[1]) || '';
   const ETATS_SANS_PHOTO = ['introuvable', 'inaccessible', 'detruit'];
   const PROBLEMES = ['detruit', 'introuvable'];
   // Photos attendues pour la fiche de visite : une de près, une de loin, puis autant d'« autres » que voulu.
@@ -29,18 +37,32 @@
   const filtre = { RBF: true, NGF: true, terminees: localStorage.getItem('calque-terminees') || 'afficher' };
   let map, marqueurs = {}, coucheMoi = null, cercleMoi = null, suivi = false, desabonner = null;
 
+  // ---------------- Thème clair / sombre ----------------
+  // auto = suit le réglage du téléphone ; sinon choix forcé dans le menu.
+  const mqSombre = window.matchMedia('(prefers-color-scheme: dark)');
+  function appliquerTheme() {
+    const pref = localStorage.getItem('theme') || 'auto';
+    const sombre = pref === 'sombre' || (pref === 'auto' && mqSombre.matches);
+    document.documentElement.dataset.theme = sombre ? 'dark' : 'light';
+    const meta = document.querySelector('meta[name=theme-color]'); if (meta) meta.content = sombre ? '#0f141b' : '#1f4e79';
+  }
+  appliquerTheme();
+  if (mqSombre.addEventListener) mqSombre.addEventListener('change', appliquerTheme);
+
   // ---------------- Démarrage ----------------
   S.init();
-  if (S.demo) {
-    $('#mode-demo').hidden = false;
-    // Mode local : pas de compte, on demande seulement le prénom (affiché sur les réservations et visites)
+  // Écran d'accueil : le prénom (affiché sur les réservations, visites, journal)
+  // + en ligne, le code équipe (mot de passe du compte partagé COMPTE_EQUIPE).
+  {
     const em = $('#cx-email'), mdp = $('#cx-mdp');
     em.type = 'text'; em.autocomplete = 'given-name'; em.placeholder = 'ex. Jack';
     em.value = localStorage.getItem('nom-terrain') || '';
     em.closest('label').firstChild.textContent = 'Ton prénom';
-    mdp.required = false; mdp.closest('label').hidden = true;
-    $('#form-connexion button').textContent = 'Commencer';
+    if (S.demo) { mdp.required = false; mdp.closest('label').hidden = true; $('#mode-demo').hidden = false; }
+    else mdp.closest('label').firstChild.textContent = 'Code équipe (donné par le bureau)';
+    $('#form-connexion button').textContent = S.demo ? 'Commencer' : 'Se connecter';
   }
+  S.onMigre = (n) => toast(`${n} repère(s) relevé(s) en mode local envoyé(s) à toute l'équipe`);
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 
   S.onAuth(u => {
@@ -52,14 +74,16 @@
   $('#form-connexion').addEventListener('submit', async (e) => {
     e.preventDefault();
     $('#cx-erreur').textContent = '';
-    if (S.demo) localStorage.setItem('nom-terrain', $('#cx-email').value.trim());
-    try { await S.connexion($('#cx-email').value.trim(), $('#cx-mdp').value); }
+    const prenom = $('#cx-email').value.trim();
+    if (!prenom) { $('#cx-erreur').textContent = 'Indique ton prénom.'; return; }
+    localStorage.setItem('nom-terrain', prenom);
+    try { await S.connexion(S.demo ? prenom : window.COMPTE_EQUIPE, $('#cx-mdp').value); }
     catch (err) { $('#cx-erreur').textContent = messageErreur(err); }
   });
 
   function messageErreur(err) {
     const c = (err && err.code) || '';
-    if (c.includes('invalid-credential') || c.includes('wrong-password') || c.includes('user-not-found')) return 'E-mail ou mot de passe incorrect.';
+    if (c.includes('invalid-credential') || c.includes('wrong-password') || c.includes('user-not-found') || c.includes('invalid-login')) return 'Code équipe incorrect.';
     if (c.includes('network')) return 'Pas de réseau. Réessayez.';
     if (c.includes('too-many-requests')) return 'Trop de tentatives, patientez une minute.';
     return (err && err.message) || 'Erreur inconnue';
@@ -68,7 +92,7 @@
   let appDemarree = false;
   function demarrerApp() {
     if (S.demo) $('#btn-deconnexion').textContent = 'Changer de prénom';
-    $('#menu-user').textContent = S.demo ? 'Mode local (relevés gardés sur ce téléphone)' : 'Connecté : ' + (S.user.email || '');
+    $('#menu-user').textContent = S.demo ? 'Mode local (relevés gardés sur ce téléphone)' : 'En ligne : relevés partagés en direct avec toute l\'équipe';
     $('#menu-nom').value = localStorage.getItem('nom-terrain') || '';
     if (!appDemarree) { initCarte(); initUI(); appDemarree = true; }
     desabonner = S.ecouter((v) => { visites = v || {}; rafraichir(); });
@@ -89,8 +113,9 @@
     };
     let fond = localStorage.getItem('fond') || 'plan';
     let actif = fonds[fond].addTo(map);
+    $('#carte').dataset.fond = fond;   // en mode sombre, les fonds « plan » sont assombris (pas la photo aérienne)
     $('#sel-fond').value = fond;
-    $('#sel-fond').onchange = (e) => { map.removeLayer(actif); fond = e.target.value; actif = fonds[fond].addTo(map); actif.bringToBack(); localStorage.setItem('fond', fond); };
+    $('#sel-fond').onchange = (e) => { map.removeLayer(actif); fond = e.target.value; actif = fonds[fond].addTo(map); actif.bringToBack(); localStorage.setItem('fond', fond); $('#carte').dataset.fond = fond; };
 
     // Contours des communes du lot 2
     const communes = L.geoJSON({
@@ -266,6 +291,8 @@
           ${ETATS.map(([k, l]) => `<option value="${k}" ${v.etat === k ? 'selected' : ''}>${l}</option>`).join('')}
         </select>
       </label>
+      ${CHAMPS.map(c => `<div class="champ"><div class="champ-titre">${c.titre}</div><div class="choix" data-champ="${c.cle}">${
+        c.choix.map(([k, l]) => `<button type="button" class="choix-btn ${v[c.cle] === k ? 'actif' : ''}" data-val="${k}">${l}</button>`).join('')}</div></div>`).join('')}
       <label>Commentaire (repris sur la fiche de visite)
         <textarea id="f-comm" rows="3" placeholder="État du repère, accès, environnement…">${esc(v.commentaire || '')}</textarea>
       </label>
@@ -294,6 +321,13 @@
     document.querySelectorAll('#fiche img[data-i], #fiche .ailleurs[data-i]').forEach(el => el.onclick = () => voirPhoto(id, +el.dataset.i));
     // Enregistrement automatique de l'état et du commentaire
     $('#f-etat').onchange = () => S.maj(id, { etat: $('#f-etat').value }, 'État : ' + (ETAT_LIB[$('#f-etat').value] || '—') + (v.etat ? ' (avant : ' + (ETAT_LIB[v.etat] || v.etat) + ')' : ''));
+    document.querySelectorAll('#fiche .choix').forEach(g => g.querySelectorAll('.choix-btn').forEach(b => b.onclick = () => {
+      const c = CHAMPS.find(x => x.cle === g.dataset.champ);
+      const nouveau = b.classList.contains('actif') ? null : b.dataset.val;
+      g.querySelectorAll('.choix-btn').forEach(x => x.classList.toggle('actif', x === b && !!nouveau));
+      if (nouveau) S.maj(id, { [c.cle]: nouveau }, c.titre + ' : ' + libChamp(c, nouveau));
+      else S.effacerChamps(id, [c.cle], c.titre + ' : effacé');
+    }));
     $('#f-comm').onblur = () => {
       const c = $('#f-comm').value.trim();
       if (c !== (v.commentaire || '')) S.maj(id, { commentaire: c }, 'Commentaire : « ' + (c.length > 80 ? c.slice(0, 80) + '…' : c) + ' »');
@@ -385,18 +419,26 @@
       const url = await S.urlPhoto(cle); if (!url) return ok();
       const anc = ((visites[id] || {}).pointages || {})[cle];
       let pt = anc ? { x: anc.x, y: anc.y } : null;
+      let taille = (anc && anc.r) || RAYON_DEFAUT;   // rayon du rond en fraction du petit côté de la photo
       const d = document.createElement('div');
       d.className = 'visionneuse pointage';
       d.innerHTML = `<div class="pt-consigne">📍 Touche le repère sur la photo</div>
-        <div class="pt-zone"><div class="pt-cadre"><img src="${url}" alt=""><i class="pt-rond" hidden></i></div></div>
+        <div class="pt-zone"><div class="pt-cadre"><img src="${url}" alt=""><i class="pt-rond" hidden></i></div>
+          <div class="pt-taille"><span>⬤</span><input type="range" min="0.015" max="0.25" step="0.005" value="${taille}" aria-label="Taille du rond"><span>·</span></div></div>
         <div class="vis-barre">
           <button class="btn secondaire" id="pt-passer">${apresPrise ? 'Plus tard' : 'Annuler'}</button>
           ${anc ? '<button class="btn secondaire" id="pt-effacer">Effacer le point</button>' : ''}
           <button class="btn principal" id="pt-ok" ${pt ? '' : 'disabled'}>Valider</button></div>`;
       document.body.appendChild(d);
       const img = d.querySelector('img'), rond = d.querySelector('.pt-rond'), okBtn = d.querySelector('#pt-ok');
-      const placer = () => { if (!pt) return; rond.hidden = false; rond.style.left = (pt.x * 100) + '%'; rond.style.top = (pt.y * 100) + '%'; };
+      const placer = () => {
+        if (!pt) return;
+        const dia = Math.max(14, 2 * taille * Math.min(img.clientWidth, img.clientHeight));
+        rond.hidden = false; rond.style.left = (pt.x * 100) + '%'; rond.style.top = (pt.y * 100) + '%';
+        rond.style.width = rond.style.height = dia + 'px'; rond.style.margin = (-dia / 2) + 'px 0 0 ' + (-dia / 2) + 'px';
+      };
       img.onload = placer;
+      d.querySelector('.pt-taille input').oninput = (e) => { taille = +e.target.value; placer(); if (pt) okBtn.disabled = false; };
       img.onclick = (e) => {
         const b = img.getBoundingClientRect();
         pt = { x: +((e.clientX - b.left) / b.width).toFixed(4), y: +((e.clientY - b.top) / b.height).toFixed(4) };
@@ -406,11 +448,10 @@
       d.querySelector('#pt-passer').onclick = fin;
       const eff = d.querySelector('#pt-effacer');
       if (eff) eff.onclick = async () => {
-        const p = Object.assign({}, (visites[id] || {}).pointages); delete p[cle];
-        await S.maj(id, { pointages: p }, 'Pointage effacé sur la ' + nomPhoto(id, cle)); toast('Point effacé'); fin();
+        await S.maj(id, { pointages: Object.assign({}, (visites[id] || {}).pointages, { [cle]: null }) }, 'Pointage effacé sur la ' + nomPhoto(id, cle)); toast('Point effacé'); fin();
       };
       okBtn.onclick = async () => {
-        await S.maj(id, { pointages: Object.assign({}, (visites[id] || {}).pointages, { [cle]: pt }) }, (anc ? 'Repère repointé' : 'Repère pointé') + ' sur la ' + nomPhoto(id, cle));
+        await S.maj(id, { pointages: Object.assign({}, (visites[id] || {}).pointages, { [cle]: Object.assign({}, pt, { r: +taille.toFixed(3) }) }) }, (anc ? 'Repère repointé' : 'Repère pointé') + ' sur la ' + nomPhoto(id, cle));
         toast('Repère pointé ✔'); fin();
       };
     });
@@ -422,14 +463,15 @@
   };
 
   // Image avec le rond rouge dessiné dessus (mise en cache)
+  const RAYON_DEFAUT = 0.05;
   const cacheMarquees = {};
   async function urlMarquee(url, pt) {
-    const k = url + '|' + pt.x + '|' + pt.y;
+    const k = url + '|' + pt.x + '|' + pt.y + '|' + (pt.r || RAYON_DEFAUT);
     if (cacheMarquees[k]) return cacheMarquees[k];
     const img = await new Promise((ok, ko) => { const i = new Image(); i.onload = () => ok(i); i.onerror = ko; i.src = url; });
     const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
     const g = c.getContext('2d'); g.drawImage(img, 0, 0);
-    const m = Math.min(c.width, c.height), r = m * 0.05;
+    const m = Math.min(c.width, c.height), r = m * (pt.r || RAYON_DEFAUT);
     g.lineWidth = Math.max(3, m * 0.012);
     g.strokeStyle = 'rgba(255,255,255,.9)'; g.beginPath(); g.arc(pt.x * c.width, pt.y * c.height, r + g.lineWidth, 0, 2 * Math.PI); g.stroke();
     g.strokeStyle = '#e00000'; g.beginPath(); g.arc(pt.x * c.width, pt.y * c.height, r, 0, 2 * Math.PI); g.stroke();
@@ -607,6 +649,8 @@
         id: r.id, type: r.t, nom: r.n, commune: r.c, etat_ign: r.e, fiche_ign: r.u,
         statut: v.statut === 'fait' ? 'visite_terminee' : (v.statut === 'reserve' ? 'reserve' : 'a_faire'),
         etat_constate: ETAT_LIB[v.etat] || '', commentaire: v.commentaire || '',
+        ciel_gnss: libChamp(CHAMPS[0], v.ciel), acces: libChamp(CHAMPS[1], v.acces),
+        conforme_ign: libChamp(CHAMPS[2], v.conforme), menace: libChamp(CHAMPS[3], v.menace),
         visite_par: v.visitePar || '', date_visite: v.visiteLe || '',
         gps_visite_lat: v.gps ? v.gps.lat : '', gps_visite_lon: v.gps ? v.gps.lon : '', gps_precision_m: v.gps ? v.gps.acc : '',
         ecart_gps_ign_m: v.gps ? Math.round(distance(v.gps, r)) : '',
@@ -649,6 +693,8 @@
       majChipTerminees(); rafraichir();
     };
     $('#menu-nom').onchange = () => { localStorage.setItem('nom-terrain', $('#menu-nom').value.trim()); toast('Nom enregistré'); };
+    $('#sel-theme').value = localStorage.getItem('theme') || 'auto';
+    $('#sel-theme').onchange = (e) => { localStorage.setItem('theme', e.target.value); appliquerTheme(); };
     $('#btn-mes-reserves').onclick = () => { $('#menu').hidden = true; $('#liste').dataset.mode = 'mes'; $('#liste').hidden = false; remplirListe(); };
     $('#btn-mail').onclick = () => envoyerParMail(false);
     $('#btn-importer').onclick = () => $('#input-import').click();

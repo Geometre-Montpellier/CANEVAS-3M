@@ -134,7 +134,7 @@
     // Position GPS en continu
     if ('geolocation' in navigator) {
       navigator.geolocation.watchPosition(p => {
-        maPos = { lat: p.coords.latitude, lon: p.coords.longitude, acc: Math.round(p.coords.accuracy) };
+        maPos = { lat: p.coords.latitude, lon: p.coords.longitude, acc: Math.round(p.coords.accuracy), t: new Date(p.timestamp || Date.now()).toISOString() };
         const ll = [maPos.lat, maPos.lon];
         if (!coucheMoi) {
           cercleMoi = L.circle(ll, { radius: maPos.acc, color: '#1a73e8', weight: 1, fillOpacity: 0.1, interactive: false }).addTo(map);
@@ -299,6 +299,7 @@
         <input type="checkbox" id="f-terminee" ${terminee ? 'checked' : ''}>
         <span>Visite terminée</span>
       </label>
+      <div id="f-archives"></div>
       ${(v.journal || []).length ? `<details class="historique"><summary>Journal des modifications (${v.journal.length})</summary><ul>${[...v.journal].reverse().map(h =>
         `<li>${fmtDate(h.le)} · <b>${esc(h.par || '?')}</b> · ${esc(h.action)}${h.ecart != null ? ` <span class="${h.ecart > ECART_ALERTE ? 'alerte' : ''}">(à ${fmtDist(h.ecart)} du repère)</span>` : ''}</li>`).join('')}</ul></details>` : ''}
       ${v.maj ? `<p class="petit">Dernière modification : ${esc(v.majPar || '')} – ${fmtDate(v.maj)}</p>` : ''}
@@ -331,6 +332,20 @@
       if (c !== (v.commentaire || '')) S.maj(id, { commentaire: c }, 'Commentaire : « ' + (c.length > 80 ? c.slice(0, 80) + '…' : c) + ' »');
     };
     $('#f-terminee').onchange = (e) => e.target.checked ? terminer(id, e.target) : rouvrir(id, e.target);
+    afficherArchives(id, !rafraichissement);
+  }
+
+  // Visites terminées archivées pour ce repère (la plus récente en premier).
+  // Lues à l'ouverture de la fiche seulement (pas à chaque mise à jour en direct) pour économiser les lectures.
+  const cacheArchives = {};
+  async function afficherArchives(id, relire) {
+    if (relire || !(id in cacheArchives)) cacheArchives[id] = await S.archivesDe(id);
+    const liste = cacheArchives[id];
+    const el = $('#f-archives'); if (!el || ouvert !== id) return;
+    if (liste === null) { el.innerHTML = '<p class="petit">Visites archivées : consultables avec du réseau.</p>'; return; }
+    if (!liste.length) { el.innerHTML = ''; return; }
+    el.innerHTML = `<details class="historique archives" open><summary>Visites terminées archivées (${liste.length})</summary><ul>${liste.map((a, k) =>
+      `<li>${k === 0 ? '<b>Dernière</b> · ' : ''}${fmtDate(a.visiteLe || a.archiveLe)} · <b>${esc(a.visitePar || a.archivePar || '?')}</b> · ${esc(ETAT_LIB[a.etat] || a.etat || '')} · ${(a.photos || []).length} photo(s)${a.commentaire ? `<br><small>« ${esc(a.commentaire.length > 100 ? a.commentaire.slice(0, 100) + '…' : a.commentaire)} »</small>` : ''}</li>`).join('')}</ul></details>`;
   }
 
   function majDistanceFiche() {
@@ -351,12 +366,15 @@
     const details = {};
     if (maPos) { patch.gps = maPos; details.ecart = Math.round(distance(maPos, PAR_ID[id])); details.gps = maPos; }
     await S.maj(id, patch, '✔ Visite terminée – ' + (ETAT_LIB[etat] || etat), details);
-    toast('Visite terminée ✔');
+    // Copie figée de la visite (jamais modifiée ni supprimée, même si la visite est rouverte puis refaite)
+    await S.archiverVisite(id, Object.assign({}, v, patch, details.ecart != null ? { ecartGpsIgn: details.ecart } : {}));
+    delete cacheArchives[id];
+    toast('Visite terminée et archivée ✔');
     $('#fiche').hidden = true; ouvert = null;   // retour à la carte
   }
 
   async function rouvrir(id, caseEl) {
-    if (!confirm('Rouvrir cette visite ? Les photos et le commentaire sont conservés.')) { caseEl.checked = true; return; }
+    if (!confirm('Rouvrir cette visite pour la refaire ?\n\nLa visite terminée précédente reste archivée telle quelle (fiche et photos) : la nouvelle visite s\'y ajoutera, elle ne la remplacera pas.')) { caseEl.checked = true; return; }
     await S.effacerChamps(id, ['statut', 'visitePar', 'visiteLe'], '↺ Visite rouverte');
     toast('Visite rouverte');
   }
@@ -376,7 +394,18 @@
     for (const f of (role === 'autre' ? fichiers : fichiers.slice(0, 1))) {
       try {
         const blob = await compresser(f);
-        const meta = Object.assign({ role }, maPos ? { gps: maPos, ecart: Math.round(distance(maPos, PAR_ID[id])) } : {});
+        // Traçabilité (jamais bloquante) : position du téléphone au moment de la prise (+ âge du point GPS)
+        // et, si l'appareil photo l'a inscrite, position et heure contenues dans la photo elle-même (EXIF).
+        const meta = { role };
+        if (maPos) {
+          meta.gps = Object.assign({}, maPos, { age: maPos.t ? Math.max(0, Math.round((Date.now() - Date.parse(maPos.t)) / 1000)) : null });
+          meta.ecart = Math.round(distance(maPos, PAR_ID[id]));
+        }
+        try {
+          const ex = await lireExif(f);
+          if (ex && ex.gps) { meta.gpsPhoto = ex.gps; meta.ecartPhoto = Math.round(distance(ex.gps, PAR_ID[id])); }
+          if (ex && ex.date) meta.datePhoto = ex.date;
+        } catch (e) { console.warn('EXIF illisible', e); }
         const cle = await S.ajouterPhoto(id, blob, meta);
         if (cle) nouvelles.push(cle);
       } catch (err) { console.error(err); toast('Photo non enregistrée : ' + err.message); }
@@ -477,6 +506,41 @@
     return (cacheMarquees[k] = URL.createObjectURL(b));
   }
 
+  // Lecture EXIF minimale d'un JPEG : position GPS (GPSLatitude / GPSLongitude / GPSAltitude) et DateTimeOriginal.
+  // Renvoie null si absent (beaucoup de téléphones retirent la position des photos transmises aux pages web).
+  async function lireExif(fichier) {
+    const buf = await fichier.slice(0, 256 * 1024).arrayBuffer();
+    const d = new DataView(buf);
+    if (d.byteLength < 4 || d.getUint16(0) !== 0xFFD8) return null;
+    let o = 2;
+    while (o + 4 < d.byteLength) {
+      const marq = d.getUint16(o), lg = d.getUint16(o + 2);
+      if (marq === 0xFFE1 && d.getUint32(o + 4) === 0x45786966) {   // "Exif"
+        const t = o + 10, le = d.getUint16(t) === 0x4949;
+        const u16 = (p) => d.getUint16(t + p, le), u32 = (p) => d.getUint32(t + p, le);
+        const lireIfd = (p) => { const n = u16(p), tags = {}; for (let i = 0; i < n; i++) { const e = p + 2 + i * 12; tags[u16(e)] = { type: u16(e + 2), nb: u32(e + 4), val: e + 8 }; } return tags; };
+        const rat = (p, k) => { const a = u32(p + 8 * k), b = u32(p + 8 * k + 4); return b ? a / b : 0; };
+        const ascii = (tag) => { const p = tag.nb > 4 ? u32(tag.val) : tag.val; let s = ''; for (let i = 0; i < tag.nb - 1; i++) s += String.fromCharCode(d.getUint8(t + p + i)); return s; };
+        const ifd0 = lireIfd(u32(4)), res = {};
+        if (ifd0[0x8769]) { const ex = lireIfd(u32(ifd0[0x8769].val)); if (ex[0x9003]) { const s = ascii(ex[0x9003]); const m = s.match(/(\d{4}):(\d\d):(\d\d) (\d\d):(\d\d):(\d\d)/); if (m) res.date = `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}`; } }
+        if (ifd0[0x8825]) {
+          const g = lireIfd(u32(ifd0[0x8825].val));
+          const dms = (tag) => { const p = u32(tag.val); return rat(p, 0) + rat(p, 1) / 60 + rat(p, 2) / 3600; };
+          if (g[2] && g[4]) {
+            let lat = dms(g[2]), lon = dms(g[4]);
+            if (g[1] && String.fromCharCode(d.getUint8(t + g[1].val)) === 'S') lat = -lat;
+            if (g[3] && String.fromCharCode(d.getUint8(t + g[3].val)) === 'W') lon = -lon;
+            if (lat || lon) { res.gps = { lat: +lat.toFixed(7), lon: +lon.toFixed(7) }; if (g[6]) res.gps.alt = +rat(u32(g[6].val), 0).toFixed(1); }
+          }
+        }
+        return (res.gps || res.date) ? res : null;
+      }
+      if ((marq & 0xFF00) !== 0xFF00) break;
+      o += 2 + lg;
+    }
+    return null;
+  }
+
   // Réduit la photo à 1600 px puis baisse la qualité jusqu'à tenir sous ~650 Ko
   // (limite Firestore : 1 Mo par document, et le base64 ajoute un tiers).
   const TAILLE_MAX = 650 * 1024;
@@ -508,6 +572,18 @@
     throw new Error('photo trop lourde même réduite');
   }
 
+  // Texte de contrôle : où était le téléphone au moment de la photo
+  function traceGps(p, r) {
+    const bouts = [];
+    if (p.gps) {
+      const d = p.ecart != null ? p.ecart : Math.round(distance(p.gps, r));
+      bouts.push(`📍 Téléphone à ${fmtDist(d)} du repère (GPS ±${p.gps.acc != null ? p.gps.acc : '?'} m${p.gps.age != null ? ', point vieux de ' + (p.gps.age < 120 ? p.gps.age + ' s' : Math.round(p.gps.age / 60) + ' min') : ''})`);
+    } else bouts.push('📍 Position du téléphone inconnue à la prise');
+    if (p.gpsPhoto) bouts.push(`Position inscrite dans la photo : à ${fmtDist(p.ecartPhoto != null ? p.ecartPhoto : distance(p.gpsPhoto, r))} du repère`);
+    if (p.datePhoto) bouts.push(`Prise par l'appareil le ${fmtDate(p.datePhoto)}`);
+    return bouts.map(esc).join('<br>').replace(/&lt;br&gt;/g, '<br>');
+  }
+
   async function voirPhoto(id, i) {
     const p = ((visites[id] || {}).photos || [])[i]; if (!p) return;
     let url = p.cle ? await S.urlPhoto(p.cle) : null;
@@ -517,7 +593,7 @@
     d.className = 'visionneuse';
     d.innerHTML = `${url ? `<img src="${url}" alt="">` : `<div class="vis-absente">⏳ Photo pas encore envoyée par le téléphone de ${esc(p.auteur || '?')}.<br>Elle arrivera dès qu'il aura du réseau.</div>`}
       <div class="vis-barre">
-      <span>${ROLES[p.role || 'autre']} · ${esc(p.auteur || '')} · ${fmtDate(p.date)}</span>
+      <span>${ROLES[p.role || 'autre']} · ${esc(p.auteur || '')} · ${fmtDate(p.date)}<br>${traceGps(p, PAR_ID[id])}</span>
       <button class="btn secondaire" id="vis-suppr">Supprimer</button>
       ${url ? `<button class="btn" id="vis-pointer">📍 ${pt ? 'Repointer' : 'Pointer le repère'}</button>` : ''}
       <button class="btn" id="vis-fermer">Fermer</button></div>`;

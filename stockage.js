@@ -62,7 +62,8 @@
     journal.sort((x, y) => String(x.le).localeCompare(String(y.le)));
     const pointages = Object.assign({}, plusRecente ? a.pointages : v.pointages, plusRecente ? v.pointages : a.pointages);
     for (const c of Object.keys(pointages)) if (!photos.some(p => p.cle === c)) delete pointages[c];
-    return Object.assign({}, plusRecente ? a : v, plusRecente ? v : a, { photos },
+    const archivees = Array.from(new Set([...(a.clesArchivees || []), ...(v.clesArchivees || [])]));
+    return Object.assign({}, plusRecente ? a : v, plusRecente ? v : a, { photos }, archivees.length ? { clesArchivees: archivees } : {},
       journal.length ? { journal } : {}, Object.keys(pointages).length ? { pointages } : {});
   }
 
@@ -140,7 +141,9 @@
     async ajouterPhoto(id, blob, meta) {
       const cle = id + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
       const desc = { cle, role: meta.role || 'autre', date: new Date().toISOString(), auteur: S.nom() };
-      if (meta.gps) desc.gps = meta.gps;
+      // Traçabilité de la prise de vue (champs présents seulement s'ils sont connus)
+      for (const k of ['gps', 'ecart', 'gpsPhoto', 'ecartPhoto', 'datePhoto']) if (meta[k] != null) desc[k] = meta[k];
+      if (desc.gps) for (const k of Object.keys(desc.gps)) if (desc.gps[k] == null) delete desc.gps[k];
       const NOMS = { pres: 'Photo de près', loin: 'Photo de loin', autre: 'Autre photo' };
       const ligne = Object.assign({ le: desc.date, par: desc.auteur, action: NOMS[desc.role] + ' ajoutée', photo: cle }, meta.ecart != null ? { ecart: meta.ecart } : {});
       await tx(['blobs', 'meta'], 'readwrite', (b, m) => {
@@ -171,7 +174,7 @@
           const blob = await blobDe(m.cle);
           if (!blob) { m.envoye = true; await majMeta(m); continue; }
           const doc = { repere: m.id, cle: m.cle, role: m.role, date: m.date, auteur: m.auteur, data: await blobVersBase64(blob) };
-          if (m.gps) doc.gps = m.gps;
+          for (const k of ['gps', 'ecart', 'gpsPhoto', 'ecartPhoto', 'datePhoto']) if (m[k] != null) doc[k] = m[k];
           try {
             // On attend la confirmation du serveur (délai max 2 min) avant de marquer la photo comme envoyée
             await Promise.race([
@@ -180,16 +183,27 @@
             ]);
             m.envoye = true; await majMeta(m);
             S.onFileChange && S.onFileChange();
-          } catch (e) { console.warn('Envoi photo reporté', e); break; }
+          } catch (e) {
+            // Photo d'une visite archivée déjà présente sur le serveur : elle est protégée (réécriture refusée), rien à renvoyer
+            if (e && e.code === 'permission-denied') { m.envoye = true; await majMeta(m); continue; }
+            console.warn('Envoi photo reporté', e); break;
+          }
         }
       } finally { S._envoi = false; S.onFileChange && S.onFileChange(); }
     },
 
     async supprimerPhoto(id, desc) {
-      await tx(['blobs', 'meta'], 'readwrite', (b, m) => { b.delete(desc.cle); m.delete(desc.cle); });
-      if (S._urls[desc.cle]) delete S._urls[desc.cle];
+      // Photo d'une visite terminée archivée : elle sort de la fiche en cours mais reste conservée
+      // (sur le serveur, et sur ce téléphone tant qu'elle n'a pas été envoyée).
+      const archivee = S.estArchivee(id, desc.cle);
+      const meta = await tx(['meta'], 'readonly', m => m.get(desc.cle)).catch(() => null);
+      const effacerIci = !archivee || (!DEMO && meta && meta.envoye);
+      if (effacerIci) {
+        await tx(['blobs', 'meta'], 'readwrite', (b, m) => { b.delete(desc.cle); m.delete(desc.cle); });
+        if (S._urls[desc.cle]) delete S._urls[desc.cle];
+      }
       const NOMS = { pres: 'Photo de près', loin: 'Photo de loin', autre: 'Autre photo' };
-      const ligne = { le: new Date().toISOString(), par: S.nom(), action: NOMS[desc.role || 'autre'] + ' supprimée', photo: desc.cle };
+      const ligne = { le: new Date().toISOString(), par: S.nom(), action: NOMS[desc.role || 'autre'] + (archivee ? ' retirée de la fiche (conservée dans la visite archivée)' : ' supprimée'), photo: desc.cle };
       if (DEMO) {
         const o = demoLire(); o[id] = o[id] || {};
         if (o[id].photos) o[id].photos = o[id].photos.filter(x => x.cle !== desc.cle);
@@ -198,7 +212,7 @@
         demoEcrire(o); demoNotifier(); return;
       }
       const batch = db.batch();
-      batch.delete(db.collection('photos').doc(desc.cle));
+      if (!archivee) batch.delete(db.collection('photos').doc(desc.cle));
       batch.set(db.collection('visites').doc(id), {
         photos: firebase.firestore.FieldValue.arrayRemove(desc), maj: ligne.le, majPar: ligne.par,
         journal: firebase.firestore.FieldValue.arrayUnion(ligne),
@@ -222,6 +236,44 @@
     },
 
     async photosLocales() { try { return await metaToutes(); } catch (e) { return []; } },
+
+    // ---------- Archives des visites terminées (copies figées, jamais modifiées ni supprimées) ----------
+    // Firebase : collection "visites_terminees" (une copie par « Visite terminée » cochée) et
+    // "archives_cles" (un marqueur par photo d'une visite archivée : les règles interdisent alors
+    // de supprimer ou de réécrire cette photo). La visite en cours garde la liste clesArchivees.
+    estArchivee(id, cle) {
+      const v = DEMO ? demoLire()[id] : (S._visitesCourantes || {})[id];
+      return !!(v && (v.clesArchivees || []).includes(cle));
+    },
+
+    async archiverVisite(id, v) {
+      const le = new Date().toISOString();
+      const photos = (v.photos || []).map(p => Object.assign({}, p));
+      const cles = photos.map(p => p.cle);
+      const pointages = {};
+      for (const c of cles) if (v.pointages && v.pointages[c]) pointages[c] = v.pointages[c];
+      const copie = Object.assign({}, v, { repere: id, photos, pointages, archiveLe: le, archivePar: S.nom() });
+      delete copie.clesArchivees; delete copie.journal;
+      if (DEMO) {
+        const a = JSON.parse(localStorage.getItem('demo-archives') || '[]'); a.push(copie); localStorage.setItem('demo-archives', JSON.stringify(a));
+        const o = demoLire(); o[id] = o[id] || {}; o[id].clesArchivees = Array.from(new Set([...(o[id].clesArchivees || []), ...cles])); demoEcrire(o); demoNotifier();
+        return;
+      }
+      const batch = db.batch();
+      batch.set(db.collection('visites_terminees').doc(), copie);
+      for (const c of cles) batch.set(db.collection('archives_cles').doc(c), { repere: id, le });
+      if (cles.length) batch.set(db.collection('visites').doc(id), { clesArchivees: firebase.firestore.FieldValue.arrayUnion(...cles) }, { merge: true });
+      // Hors réseau, Firestore garde l'écriture et l'envoie au retour du réseau
+      batch.commit().catch(e => alert('Archivage de la visite refusé : ' + e.message));
+    },
+
+    async archivesDe(id) {
+      if (DEMO) return JSON.parse(localStorage.getItem('demo-archives') || '[]').filter(a => a.repere === id).sort((a, b) => b.archiveLe.localeCompare(a.archiveLe));
+      try {
+        const snap = await db.collection('visites_terminees').where('repere', '==', id).get();
+        return snap.docs.map(d => d.data()).sort((a, b) => String(b.archiveLe).localeCompare(String(a.archiveLe)));
+      } catch (e) { console.warn(e); return null; }
+    },
 
     // Passage du mode local à Firebase : les relevés déjà faits sur ce téléphone (mode local) sont envoyés une fois.
     async migrerLocal(enLigne) {

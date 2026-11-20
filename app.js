@@ -344,7 +344,7 @@
     const el = $('#f-archives'); if (!el || ouvert !== id) return;
     if (liste === null) { el.innerHTML = '<p class="petit">Visites archivées : consultables avec du réseau.</p>'; return; }
     if (!liste.length) { el.innerHTML = ''; return; }
-    el.innerHTML = `<details class="historique archives" open><summary>Visites terminées archivées (${liste.length})</summary><ul>${liste.map((a, k) =>
+    el.innerHTML = `<details class="historique archives"><summary>Visites terminées archivées (${liste.length})</summary><ul>${liste.map((a, k) =>
       `<li>${k === 0 ? '<b>Dernière</b> · ' : ''}${fmtDate(a.visiteLe || a.archiveLe)} · <b>${esc(a.visitePar || a.archivePar || '?')}</b> · ${esc(ETAT_LIB[a.etat] || a.etat || '')} · ${(a.photos || []).length} photo(s)${a.commentaire ? `<br><small>« ${esc(a.commentaire.length > 100 ? a.commentaire.slice(0, 100) + '…' : a.commentaire)} »</small>` : ''}</li>`).join('')}</ul></details>`;
   }
 
@@ -572,18 +572,6 @@
     throw new Error('photo trop lourde même réduite');
   }
 
-  // Texte de contrôle : où était le téléphone au moment de la photo
-  function traceGps(p, r) {
-    const bouts = [];
-    if (p.gps) {
-      const d = p.ecart != null ? p.ecart : Math.round(distance(p.gps, r));
-      bouts.push(`📍 Téléphone à ${fmtDist(d)} du repère (GPS ±${p.gps.acc != null ? p.gps.acc : '?'} m${p.gps.age != null ? ', point vieux de ' + (p.gps.age < 120 ? p.gps.age + ' s' : Math.round(p.gps.age / 60) + ' min') : ''})`);
-    } else bouts.push('📍 Position du téléphone inconnue à la prise');
-    if (p.gpsPhoto) bouts.push(`Position inscrite dans la photo : à ${fmtDist(p.ecartPhoto != null ? p.ecartPhoto : distance(p.gpsPhoto, r))} du repère`);
-    if (p.datePhoto) bouts.push(`Prise par l'appareil le ${fmtDate(p.datePhoto)}`);
-    return bouts.map(esc).join('<br>').replace(/&lt;br&gt;/g, '<br>');
-  }
-
   async function voirPhoto(id, i) {
     const p = ((visites[id] || {}).photos || [])[i]; if (!p) return;
     let url = p.cle ? await S.urlPhoto(p.cle) : null;
@@ -593,7 +581,7 @@
     d.className = 'visionneuse';
     d.innerHTML = `${url ? `<img src="${url}" alt="">` : `<div class="vis-absente">⏳ Photo pas encore envoyée par le téléphone de ${esc(p.auteur || '?')}.<br>Elle arrivera dès qu'il aura du réseau.</div>`}
       <div class="vis-barre">
-      <span>${ROLES[p.role || 'autre']} · ${esc(p.auteur || '')} · ${fmtDate(p.date)}<br>${traceGps(p, PAR_ID[id])}</span>
+      <span>${ROLES[p.role || 'autre']} · ${esc(p.auteur || '')} · ${fmtDate(p.date)}</span>
       <button class="btn secondaire" id="vis-suppr">Supprimer</button>
       ${url ? `<button class="btn" id="vis-pointer">📍 ${pt ? 'Repointer' : 'Pointer le repère'}</button>` : ''}
       <button class="btn" id="vis-fermer">Fermer</button></div>`;

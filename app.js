@@ -24,8 +24,6 @@
   const PROBLEMES = ['detruit', 'introuvable'];
   // Photos attendues pour la fiche de visite : une de près, une de loin, puis autant d'« autres » que voulu.
   const ROLES = { pres: 'Photo de près', loin: 'Photo de loin', autre: 'Autre photo' };
-  // Boîte qui reçoit les envois par mail (lue au bureau par importer-mails.ps1)
-  const ADRESSE_BUREAU = 'nicolas.midonnet@siragusa.fr';
   const TERMINEES = { afficher: 'Visites terminées : affichées', masquer: 'Visites terminées : masquées', seules: 'Visites terminées seulement' };
 
   const $ = (s) => document.querySelector(s);
@@ -538,75 +536,19 @@
   const fmtMo = (o) => (o / 1048576).toFixed(o < 10485760 ? 1 : 0).replace('.', ',') + ' Mo';
   async function majEnvoi() {
     const metas = await S.photosLocales();
-    const attente = metas.filter(m => !m.envoye), envoyees = metas.filter(m => m.envoye);
-    if (attente.length) $('#prog-texte').dataset.attente = `⏳ ${attente.length} photo(s) à envoyer`; else delete $('#prog-texte').dataset.attente;
-    // Envoi par mail : photos pas encore parties dans un ZIP
-    const miennes = metas.filter(m => !m.importe);
-    const aMailer = miennes.filter(m => !m.exporte), mailees = miennes.filter(m => m.exporte);
-    const parties = (m) => (m.envoye && !S.demo) || m.exporte;
-    const liberables = metas.filter(parties);
-    if (S.demo) {
-      if (aMailer.length) $('#prog-texte').dataset.attente = `📤 ${aMailer.length} photo(s) pas encore partagée(s)`; else delete $('#prog-texte').dataset.attente;
-      const tot = metas.reduce((s, m) => s + (m.taille || 0), 0);
-      $('#envoi-etat').innerHTML = `Ce téléphone contient <b>${metas.length} photo(s)</b> (${fmtMo(tot)}), dont ${miennes.length} prise(s) ici`
-        + (aMailer.length ? ` et <b>${aMailer.length}</b> jamais partagée(s).` : '.');
-    } else {
-      if (attente.length) $('#prog-texte').dataset.attente = `⏳ ${attente.length} photo(s) à envoyer`; else delete $('#prog-texte').dataset.attente;
-      $('#envoi-etat').innerHTML = attente.length
+    const attente = metas.filter(m => !m.envoye);
+    // Photos déjà dans Firebase mais encore gardées sur ce téléphone (place libérable)
+    const liberables = S.demo ? [] : metas.filter(m => m.envoye);
+    if (attente.length && !S.demo) $('#prog-texte').dataset.attente = `⏳ ${attente.length} photo(s) à envoyer`; else delete $('#prog-texte').dataset.attente;
+    $('#envoi-etat').innerHTML = S.demo
+      ? `Mode local : ${metas.length} photo(s) sur ce téléphone, non partagées.`
+      : attente.length
         ? `⏳ <b>${attente.length} photo(s)</b> en attente d'envoi (${fmtMo(attente.reduce((s, m) => s + (m.taille || 0), 0))}). Envoi automatique dès que le réseau le permet.`
         : '✔ Toutes les photos sont envoyées.';
-    }
     $('#envoi-local').textContent = liberables.length
-      ? `${liberables.length} photo(s) déjà parties, encore gardées sur ce téléphone (${fmtMo(liberables.reduce((s, m) => s + (m.taille || 0), 0))}).` : '';
+      ? `${liberables.length} photo(s) déjà envoyées, encore gardées sur ce téléphone (${fmtMo(liberables.reduce((s, m) => s + (m.taille || 0), 0))}).` : '';
     $('#btn-envoyer').hidden = S.demo || !attente.length;
-    $('#btn-mail').disabled = false;   // partage possible même sans photo (état des visites)
     $('#btn-liberer').hidden = !liberables.length;
-  }
-
-  // Partage du ou des ZIP (Android : choisir Gmail / Outlook). Sans partage possible : téléchargement.
-  // Le fichier = état complet de l'appli sur ce téléphone : toutes ses photos (depuis le début)
-  // + toutes les visites. L'import chez les autres ignore ce qu'ils ont déjà.
-  async function envoyerParMail() {
-    const b = $('#btn-mail');
-    const libelle = b.textContent; b.disabled = true; b.textContent = 'Préparation…';
-    try {
-      const lots = await S.construireZips(REPERES, visites, true);
-      const jour = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
-      const qui = S.nom().replace(/[^\w-]+/g, '');
-      const fichiers = lots.map((l, k) => new File([l.zip], `reperes3m_${qui}_${jour}${lots.length > 1 ? '_' + (k + 1) + 'sur' + lots.length : ''}.zip`, { type: 'application/zip' }));
-      const nbPhotos = lots.reduce((s, l) => s + l.cles.length, 0);
-      const texte = `Repères 3M lot 2 – relevés de ${S.nom()} (${nbPhotos} photo(s)). À importer dans l'appli (menu ☰ > Importer un fichier reçu) et à envoyer au bureau : ${ADRESSE_BUREAU}.`;
-      // Un mail par ZIP (chaque pièce jointe < 18 Mo)
-      for (let k = 0; k < fichiers.length; k++) {
-        const f = fichiers[k];
-        let partage = false;
-        if (navigator.canShare && navigator.canShare({ files: [f] })) {
-          if (fichiers.length > 1 && k > 0 && !confirm(`Envoyer la partie ${k + 1} sur ${fichiers.length} ?`)) break;
-          try { await navigator.share({ files: [f], title: f.name, text: texte }); partage = true; }
-          catch (e) { if (e.name === 'AbortError') { toast('Envoi annulé'); return; } }
-        }
-        if (!partage) telecharger(f.name, f, 'application/zip');
-      }
-      // Date du dernier partage (sert à « Libérer la place »)
-      await S.marquerExportees(lots.flatMap(l => l.cles));
-      toast(`Fichier partagé : ${nbPhotos} photo(s) + état des visites`);
-    } catch (e) { console.error(e); alert('Préparation impossible : ' + e.message); }
-    finally { b.textContent = libelle; majEnvoi(); }
-  }
-
-  // Import du ou des fichiers reçus d'un collègue
-  async function importerFichiers(fichiers) {
-    const avecPhotos = $('#imp-photos').checked;
-    const bilans = [];
-    for (const f of fichiers) {
-      try {
-        const b = await S.importerZip(f, avecPhotos);
-        bilans.push(`✔ ${f.name}\n   ${b.auteur || '?'} – ${b.nbVisites} repère(s) mis à jour, ${b.nbPhotos} photo(s) ajoutée(s)`);
-      } catch (e) { console.error(e); bilans.push(`✖ ${f.name} : ${e.message}`); }
-    }
-    majEnvoi();
-    if (ouvert) afficherFiche(ouvert);
-    alert('Import terminé\n\n' + bilans.join('\n'));
   }
 
   // ---------------- Liste / UI ----------------
@@ -696,12 +638,9 @@
     $('#sel-theme').value = localStorage.getItem('theme') || 'auto';
     $('#sel-theme').onchange = (e) => { localStorage.setItem('theme', e.target.value); appliquerTheme(); };
     $('#btn-mes-reserves').onclick = () => { $('#menu').hidden = true; $('#liste').dataset.mode = 'mes'; $('#liste').hidden = false; remplirListe(); };
-    $('#btn-mail').onclick = () => envoyerParMail(false);
-    $('#btn-importer').onclick = () => $('#input-import').click();
-    $('#input-import').onchange = (e) => { const f = Array.from(e.target.files || []); e.target.value = ''; if (f.length) importerFichiers(f); };
     $('#btn-envoyer').onclick =() => { if (!navigator.onLine) { toast('Pas de réseau pour l\'instant'); return; } S.envoyerFile(); toast('Envoi relancé'); };
     $('#btn-liberer').onclick = async () => {
-      if (!confirm('Retirer de ce téléphone les photos déjà partagées ?\n\nÀ ne faire que si elles sont bien arrivées au bureau : les prochains fichiers partagés depuis ce téléphone ne les contiendront plus.')) return;
+      if (!confirm('Retirer de ce téléphone les photos déjà envoyées ?\n\nElles restent dans l\'appli (téléchargées depuis le serveur quand on les ouvre, avec du réseau).')) return;
       const n = await S.libererPlace(); majEnvoi(); if (ouvert) afficherFiche(ouvert); toast(n + ' photo(s) retirée(s) du téléphone');
     };
     $('#btn-menu').addEventListener('click', majEnvoi);

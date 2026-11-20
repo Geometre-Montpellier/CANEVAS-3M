@@ -223,80 +223,6 @@
 
     async photosLocales() { try { return await metaToutes(); } catch (e) { return []; } },
 
-    // ---------- Envoi au bureau par mail (ZIP) ----------
-    // Découpe en plusieurs ZIP de 18 Mo max (limite des pièces jointes Gmail / Outlook).
-    // Chaque ZIP : Photos/<Commune>/<Repère> (<id>)/pres.jpg, loin.jpg, autre-….jpg + dechargement.json
-    async construireZips(reperes, visites, toutes) {
-      const MAX = 18 * 1024 * 1024;
-      const parId = Object.fromEntries(reperes.map(r => [r.id, r]));
-      // Tout ce que le téléphone possède, y compris les photos importées des collègues :
-      // le dernier fichier de n'importe qui suffit à un nouvel arrivant pour avoir l'état complet.
-      const metas = (await metaToutes()).filter(m => toutes || !m.exporte).sort((a, b) => a.date.localeCompare(b.date));
-      const propre = (s) => String(s).replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim();
-      const lots = [[]]; let taille = 0;
-      for (const m of metas) {
-        if (!parId[m.id]) continue;
-        if (taille + (m.taille || 0) > MAX && lots[lots.length - 1].length) { lots.push([]); taille = 0; }
-        lots[lots.length - 1].push(m); taille += m.taille || 0;
-      }
-      // Même sans nouvelle photo, le fichier transporte l'état des visites (réservations, repères introuvables…)
-      const resultat = [];
-      for (let k = 0; k < lots.length; k++) {
-        const fichiers = [], liste = [];
-        for (const m of lots[k]) {
-          const r = parId[m.id];
-          const nom = m.role === 'autre' ? 'autre-' + m.date.replace(/[-:T]/g, '').slice(0, 14) + '.jpg' : m.role + '.jpg';
-          const chemin = `Photos/${propre(r.c)}/${propre(r.n)} (${r.id})/${nom}`;
-          const blob = await blobDe(m.cle);
-          if (!blob) continue;
-          fichiers.push({ chemin, blob, date: new Date(m.date) });
-          liste.push({ cle: m.cle, id: m.id, role: m.role, date: m.date, auteur: m.auteur, gps: m.gps || null, fichier: chemin });
-        }
-        const manifeste = { app: 'reperes-3m-lot2', version: 1, auteur: S.nom(), compte: user && user.email,
-          date: new Date().toISOString(), partie: k + 1, parties: lots.length, photos: liste, visites };
-        fichiers.push({ chemin: 'dechargement.json', blob: new Blob([JSON.stringify(manifeste, null, 1)], { type: 'application/json' }), date: new Date() });
-        resultat.push({ zip: await zipStocke(fichiers), cles: liste.map(p => p.cle) });
-      }
-      return resultat;
-    },
-
-    // Import du fichier d'un collègue : fusion des visites (la plus récente gagne, photos réunies)
-    // et copie des photos sur ce téléphone. Retourne un bilan.
-    async importerZip(fichier, avecPhotos) {
-      const entrees = await lireZip(fichier);
-      const man = entrees['dechargement.json'] ? JSON.parse(await entrees['dechargement.json'].text()) : null;
-      if (!man || man.app !== 'reperes-3m-lot2') throw new Error('ce fichier ne vient pas de l\'appli Repères 3M');
-      const locales = DEMO ? demoLire() : null;
-      const actuelles = DEMO ? locales : (S._visitesCourantes || {});
-      let nbVisites = 0, nbPhotos = 0;
-      // 1. Visites
-      for (const [id, v] of Object.entries(man.visites || {})) {
-        const a = actuelles[id] || {};
-        const fusion = fusionner(a, v);
-        if (JSON.stringify(fusion) === JSON.stringify(a)) continue;
-        nbVisites++;
-        if (DEMO) locales[id] = fusion;
-        else db.collection('visites').doc(id).set(fusion, { merge: true }).catch(e => console.warn(e));
-      }
-      if (DEMO) { demoEcrire(locales); demoNotifier(); }
-      // 2. Photos (copie locale, déjà « parties » : on ne les renvoie pas)
-      if (avecPhotos) {
-        const deja = new Set((await metaToutes()).map(m => m.cle));
-        for (const p of (man.photos || [])) {
-          if (deja.has(p.cle) || !entrees[p.fichier]) continue;
-          const blob = new Blob([await entrees[p.fichier].arrayBuffer()], { type: 'image/jpeg' });
-          await tx(['blobs', 'meta'], 'readwrite', (b, m) => {
-            b.put({ cle: p.cle, blob });
-            m.put({ cle: p.cle, id: p.id, role: p.role, date: p.date, auteur: p.auteur, gps: p.gps, taille: blob.size,
-              envoye: DEMO, exporte: new Date().toISOString(), importe: true });   // en ligne : on l'envoie aussi à Firebase
-          });
-          nbPhotos++;
-        }
-      }
-      if (!DEMO && nbPhotos) S.envoyerFile();
-      return { auteur: man.auteur, date: man.date, nbVisites, nbPhotos, partie: man.partie, parties: man.parties };
-    },
-
     // Passage du mode local à Firebase : les relevés déjà faits sur ce téléphone (mode local) sont envoyés une fois.
     async migrerLocal(enLigne) {
       if (DEMO || localStorage.getItem('migre-firebase')) return 0;
@@ -316,15 +242,9 @@
       return n;
     },
 
-    async marquerExportees(cles) {
-      const set = new Set(cles), quand = new Date().toISOString();
-      const a = (await metaToutes()).filter(o => set.has(o.cle));
-      await tx(['meta'], 'readwrite', (m) => { a.forEach(o => { o.exporte = quand; m.put(o); }); });
-    },
-
-    // Supprime du téléphone les copies des photos déjà parties (par Firebase ou par mail)
+    // Supprime du téléphone les copies des photos déjà envoyées à Firebase (elles restent consultables en ligne)
     async libererPlace() {
-      const envoyees = (await metaToutes()).filter(m => (m.envoye && !DEMO) || m.exporte);
+      const envoyees = (await metaToutes()).filter(m => m.envoye && !DEMO);
       await tx(['blobs', 'meta'], 'readwrite', (b, m) => { envoyees.forEach(x => { b.delete(x.cle); m.delete(x.cle); }); });
       envoyees.forEach(x => { if (S._urls[x.cle] && S._urls[x.cle].startsWith('blob:')) { URL.revokeObjectURL(S._urls[x.cle]); delete S._urls[x.cle]; } });
       return envoyees.length;
@@ -334,65 +254,5 @@
       return localStorage.getItem('nom-terrain') || (user && user.email ? user.email.split('@')[0] : 'inconnu');
     }
   };
-  // ---------- ZIP sans compression (les JPEG sont déjà compressés) ----------
-  const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
-  function crc32(u8) { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRC[(c ^ u8[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
-  async function zipStocke(fichiers) {
-    const enc = new TextEncoder();
-    const parts = [], central = [];
-    let offset = 0;
-    for (const f of fichiers) {
-      const nom = enc.encode(f.chemin);
-      const data = new Uint8Array(await f.blob.arrayBuffer());
-      const crc = crc32(data), taille = data.length;
-      const d = f.date, heure = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
-      const jour = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
-      const lh = new DataView(new ArrayBuffer(30));
-      lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true);
-      lh.setUint16(10, heure, true); lh.setUint16(12, jour, true); lh.setUint32(14, crc, true);
-      lh.setUint32(18, taille, true); lh.setUint32(22, taille, true); lh.setUint16(26, nom.length, true);
-      parts.push(lh.buffer, nom, f.blob);
-      const ch = new DataView(new ArrayBuffer(46));
-      ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true);
-      ch.setUint16(12, heure, true); ch.setUint16(14, jour, true); ch.setUint32(16, crc, true);
-      ch.setUint32(20, taille, true); ch.setUint32(24, taille, true); ch.setUint16(28, nom.length, true);
-      ch.setUint32(42, offset, true);
-      central.push(ch.buffer, nom);
-      offset += 30 + nom.length + taille;
-    }
-    const tailleCentral = central.reduce((s, p) => s + (p.byteLength || p.length), 0);
-    const fin = new DataView(new ArrayBuffer(22));
-    fin.setUint32(0, 0x06054b50, true); fin.setUint16(8, fichiers.length, true); fin.setUint16(10, fichiers.length, true);
-    fin.setUint32(12, tailleCentral, true); fin.setUint32(16, offset, true);
-    return new Blob(parts.concat(central, [fin.buffer]), { type: 'application/zip' });
-  }
-
-  // Lecture d'un ZIP (entrées stockées, ou compressées « deflate » si une appli l'a recompressé)
-  async function lireZip(fichier) {
-    const buf = new Uint8Array(await fichier.arrayBuffer());
-    const dv = new DataView(buf.buffer);
-    let fin = -1;
-    for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { fin = i; break; }
-    if (fin < 0) throw new Error('fichier ZIP illisible');
-    const nb = dv.getUint16(fin + 10, true);
-    let p = dv.getUint32(fin + 16, true);
-    const dec = new TextDecoder();
-    const res = {};
-    for (let k = 0; k < nb; k++) {
-      if (dv.getUint32(p, true) !== 0x02014b50) throw new Error('ZIP abîmé');
-      const methode = dv.getUint16(p + 10, true), taille = dv.getUint32(p + 20, true);
-      const ln = dv.getUint16(p + 28, true), lx = dv.getUint16(p + 30, true), lc = dv.getUint16(p + 32, true);
-      const local = dv.getUint32(p + 42, true);
-      const nom = dec.decode(buf.subarray(p + 46, p + 46 + ln));
-      const debut = local + 30 + dv.getUint16(local + 26, true) + dv.getUint16(local + 28, true);
-      const brut = buf.subarray(debut, debut + taille);
-      if (methode === 0) res[nom] = new Blob([brut]);
-      else if (methode === 8 && 'DecompressionStream' in window) res[nom] = await new Response(new Blob([brut]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).blob();
-      else throw new Error('format de compression non pris en charge');
-      p += 46 + ln + lx + lc;
-    }
-    return res;
-  }
-
   window.Stockage = S;
 })();

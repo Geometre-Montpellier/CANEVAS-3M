@@ -74,6 +74,8 @@
     <div class="poignee"></div>
     <button class="fermer" data-ferme="liste">✕</button>
     <h2>Repères les plus proches</h2>
+    <div class="onglets" id="mode-liste"><button type="button" data-mode="proches">Proches</button><button type="button" data-mode="cheminement">Cheminement optimisé</button></div>
+    <p class="petit" id="chem-info" hidden></p>
     <input type="search" id="recherche" placeholder="Rechercher un nom ou une commune…">
     <ul id="liste-items"></ul>
   </div>
@@ -119,6 +121,7 @@
 <script src="data/reperes-lot2.js"></script>
 <script src="data/photos-ign.js"></script>
 <script src="data/fiches-ign.js"></script>
+<script src="data/cheminement.js"></script>
 <script src="stockage.js"></script>
 <script src="app.js"></script>
 </body>

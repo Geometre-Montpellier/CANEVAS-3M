@@ -119,6 +119,17 @@ details.ign summary { cursor: pointer; font-weight: 600; color: var(--bleu); }
 #liste-items li div { flex: 1; min-width: 0; }
 #liste-items li span { font-size: .85rem; color: var(--bleu); font-weight: 600; white-space: nowrap; }
 #menu .btn { width: 100%; margin: 4px 0; }
+.onglets { display: flex; gap: 6px; margin: 6px 0 8px; }
+.onglets button { flex: 1; padding: 8px 6px; border: 1.5px solid var(--bleu); background: #fff; color: var(--bleu); border-radius: 10px; font-weight: 600; font-size: .9rem; }
+.onglets button.actif { background: var(--bleu); color: #fff; }
+#liste-items .rang { font-style: normal; min-width: 30px; text-align: right; font-size: .8rem; font-weight: 700; color: var(--gris); }
+#liste-items li.suivant { background: #fff4ec; box-shadow: inset 4px 0 0 var(--afaire); }
+#liste-items li.suivant span { color: var(--afaire); }
+#liste-items li.chem-fait { opacity: .55; }
+.btn.chem-suivant { width: 100%; margin: 4px 0 10px; text-align: left; border-color: var(--afaire); color: var(--texte); font-weight: 400; }
+[data-theme="dark"] .onglets button { background: transparent; color: #8cbcf0; border-color: #8cbcf0; }
+[data-theme="dark"] .onglets button.actif { background: #8cbcf0; color: #10161d; }
+[data-theme="dark"] #liste-items li.suivant { background: #3a2a1e; }
 
 .visionneuse { position: fixed; inset: 0; z-index: 3000; background: rgba(0,0,0,.92); display: flex; flex-direction: column; }
 .photo-absente { aspect-ratio: 4/3; border-radius: 8px; background: #f1f3f6; color: var(--gris); font-size: .75rem; display: flex; align-items: center; justify-content: center; text-align: center; padding: 6px; cursor: pointer; }

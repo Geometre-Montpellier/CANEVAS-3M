@@ -322,6 +322,7 @@
         <span>Visite terminée</span>
       </label>
       <div id="f-archives"></div>
+      ${modeListe === 'cheminement' && RANG[r.id] != null ? (s => s ? `<button class="btn chem-suivant" data-suivant="${s}">➜ Suivant du cheminement (n° ${RANG[s] + 1}) : <b>${esc(PAR_ID[s].n)}</b> · ${esc(PAR_ID[s].c)}</button>` : '')(suivantChemin(r.id)) : ''}
       ${(v.journal || []).length ? `<details class="historique"><summary>Journal des modifications (${v.journal.length})</summary><ul>${[...v.journal].reverse().map(h =>
         `<li>${fmtDate(h.le)} · <b>${esc(h.par || '?')}</b> · ${esc(h.action)}${h.ecart != null ? ` <span class="${h.ecart > ECART_ALERTE ? 'alerte' : ''}">(à ${fmtDist(h.ecart)} du repère)</span>` : ''}</li>`).join('')}</ul></details>` : ''}
       ${v.maj ? `<p class="petit">Dernière modification : ${esc(v.majPar || '')} – ${fmtDate(v.maj)}</p>` : ''}
@@ -331,6 +332,11 @@
     majDistanceFiche();
 
     const on = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
+    on('#fiche .chem-suivant', e => {
+      const s = PAR_ID[e.currentTarget.dataset.suivant];
+      map.setView([s.lat, s.lon], Math.max(map.getZoom(), 16));
+      afficherFiche(s.id); $('#fiche').scrollTop = 0;
+    });
     document.querySelectorAll('#fiche .photo-ajout').forEach(b => b.onclick = () => {
       const inp = $('#input-photo');
       inp.dataset.id = id; inp.dataset.role = b.dataset.role;
@@ -669,8 +675,27 @@
     $('#btn-liberer').hidden = !liberables.length;
   }
 
+  // ---------------- Cheminement optimisé ----------------
+  // Ordre fixe de passage par tous les repères (trajet aller le plus court par la route, calculé par
+  // itineraire\calculer-itineraire.ps1). L'appli propose le premier repère non terminé qui suit.
+  const CHEMIN = (window.CHEMINEMENT || []).filter(id => PAR_ID[id]);
+  const RANG = Object.fromEntries(CHEMIN.map((id, k) => [id, k]));
+  let modeListe = 'proches';
+  try { if (localStorage.getItem('mode-liste') === 'cheminement' && CHEMIN.length) modeListe = 'cheminement'; } catch (e) {}
+  const estFait = id => !!(visites[id] && visites[id].statut === 'fait');
+  // Prochain repère à faire après « depuis » (ou depuis le début), en reprenant au début si besoin
+  function suivantChemin(depuis) {
+    const k0 = depuis != null && RANG[depuis] != null ? RANG[depuis] + 1 : 0;
+    for (let k = 0; k < CHEMIN.length; k++) { const id = CHEMIN[(k0 + k) % CHEMIN.length]; if (id !== depuis && filtre[PAR_ID[id].t] && !estFait(id)) return id; }
+    return null;
+  }
+
   // ---------------- Liste / UI ----------------
   function remplirListe() {
+    document.querySelectorAll('#mode-liste button').forEach(b => b.classList.toggle('actif', b.dataset.mode === modeListe));
+    $('#mode-liste').hidden = !CHEMIN.length;
+    if (modeListe === 'cheminement') return remplirCheminement();
+    $('#chem-info').hidden = true;
     const q = $('#recherche').value.trim().toLowerCase();
     let items = REPERES.filter(visible).filter(r => !q || r.n.toLowerCase().includes(q) || r.c.toLowerCase().includes(q));
     items = items.map(r => ({ r, d: maPos ? distance(maPos, r) : null }))
@@ -688,6 +713,26 @@
     });
   }
 
+  function remplirCheminement() {
+    const q = $('#recherche').value.trim().toLowerCase();
+    const prochain = suivantChemin(null);
+    const restants = CHEMIN.filter(id => filtre[PAR_ID[id].t] && !estFait(id)).length;
+    $('#liste h2').textContent = 'Cheminement optimisé';
+    $('#chem-info').hidden = false;
+    $('#chem-info').textContent = restants ? `${restants} repère(s) à faire. Le parcours suit l'ordre des numéros ; les repères terminés sont sautés.` : 'Tous les repères du parcours sont terminés.';
+    const items = CHEMIN.map(id => PAR_ID[id]).filter(visible).filter(r => !q || r.n.toLowerCase().includes(q) || r.c.toLowerCase().includes(q));
+    $('#liste-items').innerHTML = items.map(r => {
+      const sv = statutVisuel(visites[r.id]), suiv = r.id === prochain;
+      return `<li data-id="${r.id}" class="${suiv ? 'suivant' : ''} ${sv === 'fait' ? 'chem-fait' : ''}"><i class="rang">${RANG[r.id] + 1}</i><i class="pastille ${sv}"></i><div><b>${esc(r.n)}</b> <small>${r.t}</small><br><small>${esc(r.c)}</small></div><span>${suiv ? 'Suivant' + (maPos ? ' · ' + fmtDist(distance(maPos, r)) : '') : ''}</span></li>`;
+    }).join('') || '<li>Aucun repère</li>';
+    document.querySelectorAll('#liste-items li[data-id]').forEach(li => li.onclick = () => {
+      const r = PAR_ID[li.dataset.id];
+      map.setView([r.lat, r.lon], Math.max(map.getZoom(), 17));
+      afficherFiche(r.id);
+    });
+    if (remplirCheminement.defiler) { remplirCheminement.defiler = false; const s = $('#liste-items li.suivant'); if (s) s.scrollIntoView({ block: 'center' }); }
+  }
+
   function toast(t) {
     const el = $('#toast'); el.textContent = t; el.hidden = false;
     clearTimeout(toast._t); toast._t = setTimeout(() => el.hidden = true, 2600);
@@ -698,7 +743,11 @@
       $('#' + b.dataset.ferme).hidden = true;
       if (b.dataset.ferme === 'fiche') ouvert = null;
     });
-    $('#btn-liste').onclick = () => { $('#fiche').hidden = true; ouvert = null; $('#menu').hidden = true; $('#liste').hidden = false; remplirListe(); };
+    $('#btn-liste').onclick = () => { $('#fiche').hidden = true; ouvert = null; $('#menu').hidden = true; $('#liste').hidden = false; remplirCheminement.defiler = true; remplirListe(); };
+    document.querySelectorAll('#mode-liste button').forEach(b => b.onclick = () => {
+      modeListe = b.dataset.mode; try { localStorage.setItem('mode-liste', modeListe); } catch (e) {}
+      remplirCheminement.defiler = true; remplirListe();
+    });
     $('#recherche').oninput = remplirListe;
     $('#btn-menu').onclick = () => { $('#menu').hidden = !$('#menu').hidden; };
     $('#btn-moi').onclick = () => {

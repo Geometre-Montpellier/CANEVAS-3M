@@ -6,7 +6,10 @@
   // Extraits des fiches IGN (générés sur le PC par extraire-photos-ign.ps1 et extraire-textes-ign) :
   // repères qui ont une photo sur leur fiche, et support / partie support / repèrements des NGF
   const PHOTOS_IGN = new Set(window.PHOTOS_IGN || []);
-  const FICHES_ABSENTES = new Set(window.FICHES_ABSENTES || []);   // fiche PDF retirée du site IGN
+  const FICHES_ABSENTES = new Set(window.FICHES_ABSENTES || []);   // fiche PDF que le site IGN ne sert pas (données et photo repris de sa base)
+  const SITES_IGN = window.SITES_IGN || {};                        // RBF : photo du site et croquis de repérage
+  // Image IGN avec sa légende ; un toucher l'ouvre en grand (zoom possible) dans un nouvel onglet
+  const imageIgn = (fichier, legende, croquis) => `<figure class="ign-img${croquis ? ' croquis' : ''}"><a href="data/photos-ign/${fichier}" target="_blank" rel="noopener"><img class="photo-ign" src="data/photos-ign/${fichier}" loading="lazy" alt="${legende}"></a><figcaption>${legende}</figcaption></figure>`;
   const FICHES_IGN = window.FICHES_IGN || {};
   const apos = (s) => String(s || '').replace(/[’‘`´]/g, "'");   // apostrophes typographiques ≡ droites
   const ETATS = [
@@ -179,13 +182,11 @@
   function icone(r, v) {
     const sv = statutVisuel(v);
     // Repère « non retrouvé » (ou en mauvais état) d'après l'IGN : même pointeur, avec un point blanc au centre
-    // Repère dont la fiche n'existe plus sur le site IGN : pointeur blanc tant qu'il est à faire (vert une fois visité)
-    const sansFiche = FICHES_ABSENTES.has(r.id) && sv === 'afaire';
-    const nonRetrouveIGN = r.e && r.e !== 'Bon état' && !sansFiche;
+    const nonRetrouveIGN = r.e && r.e !== 'Bon état';
     const forme = r.t === 'RBF' ? 'tri' : 'rond';
     return L.divIcon({
       className: 'mq', iconSize: [26, 26], iconAnchor: [13, 13],
-      html: `<div class="mq-${forme} s-${sansFiche ? 'sansfiche' : sv}"></div>${nonRetrouveIGN ? `<i class="point-ign point-${forme}"></i>` : ''}`
+      html: `<div class="mq-${forme} s-${sv}"></div>${nonRetrouveIGN ? `<i class="point-ign point-${forme}"></i>` : ''}`
     });
   }
 
@@ -278,16 +279,18 @@
         <span class="badge ${r.t}">${r.t === 'RBF' ? '▲ Géodésique RBF (X/Y)' : '● Nivellement NGF (Z)'}</span>
         <h2>${esc(r.n)}</h2>
         <div class="commune">${esc(r.c)} · <span id="fiche-dist"></span></div>
-        <div class="statut s-${sv}">${libStatut}</div>
       </div>
+      <div class="statut s-${sv}">${libStatut}</div>
       <div class="actions">
-        ${FICHES_ABSENTES.has(r.id) ? '<div class="btn fiche-absente">📄 Fiche absente du site IGN</div>' : `<a class="btn fiche-ign" href="${esc(r.u)}" target="_blank" rel="noopener">📄 Fiche IGN originale</a>`}
+        ${FICHES_ABSENTES.has(r.id) ? '<div class="btn fiche-absente">📄 Fiche PDF indisponible sur le site IGN</div>' : `<a class="btn fiche-ign" href="${esc(r.u)}" target="_blank" rel="noopener">📄 Fiche IGN originale</a>`}
       </div>
       <div class="actions">
         <a class="btn" href="https://www.google.com/maps/dir/?api=1&destination=${r.lat},${r.lon}&travelmode=driving" target="_blank" rel="noopener"><svg width="18" height="24" viewBox="0 0 24 32" aria-hidden="true"><path d="M12 0C5.4 0 0 5.3 0 11.9 0 20.8 12 32 12 32s12-11.2 12-20.1C24 5.3 18.6 0 12 0z" fill="#ea4335"/><circle cx="12" cy="11.8" r="4.6" fill="#a50e0e"/></svg> Itinéraire</a>      </div>
       <details class="ign">
         <summary>Données IGN</summary>
-        ${PHOTOS_IGN.has(r.id) ? `<img class="photo-ign" src="data/photos-ign/${r.id}.jpg" loading="lazy" alt="Photo du repère (fiche IGN)">` : '<p class="petit">Pas de photo sur la fiche IGN.</p>'}
+        ${PHOTOS_IGN.has(r.id) ? imageIgn(`${r.id}.jpg`, 'Photo du repère (IGN)') : `<p class="petit">Pas de photo du repère à l'IGN.</p>`}
+        ${(SITES_IGN[r.id] || {}).site ? imageIgn(SITES_IGN[r.id].site, 'Photo du site (IGN)') : ''}
+        ${(SITES_IGN[r.id] || {}).croquis ? imageIgn(SITES_IGN[r.id].croquis, 'Croquis de repérage (IGN)', true) : ''}
         <p class="pre">${esc(r.l)}</p>
         ${ficheIgn ? `<dl class="ign-fiche">${[['Support', ficheIgn.s && !apos(r.l).includes(apos(ficheIgn.s)) ? ficheIgn.s : ''], ['Partie support', ficheIgn.p], ['Repèrements', ficheIgn.r]].filter(x => x[1]).map(([t, x]) => `<dt>${t}</dt><dd>${esc(x)}</dd>`).join('')}</dl>` : ''}
         <p>État IGN : <b class="${r.e !== 'Bon état' ? 'alerte' : ''}">${esc(r.e)}</b></p>

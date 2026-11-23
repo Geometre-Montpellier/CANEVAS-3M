@@ -235,7 +235,12 @@ details.ign summary { cursor: pointer; font-weight: 600; color: var(--bleu); }
 dl.ign-fiche { margin: 6px 0; font-size: .85rem; }
 dl.ign-fiche dt { color: var(--gris); margin-top: 6px; }
 dl.ign-fiche dd { margin: 0; font-weight: 600; }
-/* Repère dont la fiche n'existe plus sur le site IGN : pointeur blanc (tant qu'il est à faire) */
-.mq-rond.s-sansfiche { background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.6); }
-.mq-tri.s-sansfiche { border-bottom-color: #fff; }
+/* Fiche PDF indisponible sur le site IGN : bouton inactif à la place du lien */
 .btn.fiche-absente { cursor: default; color: var(--gris); border-style: dashed; }
+/* Fiche repère : en-tête (type, nom, commune) et croix de fermeture restent visibles quand on fait défiler */
+#fiche .fermer { position: sticky; top: 0; float: right; z-index: 3; margin: -2px -6px -40px 0; }
+#fiche .fiche-tete { position: sticky; top: -8px; z-index: 2; background: #fff; margin: 0 -16px; padding: 8px 16px 6px; border-bottom: 1px solid var(--bord); }
+[data-theme="dark"] #fiche .fiche-tete { background: var(--carte-fond); border-bottom-color: #2a323d; }
+figure.ign-img { margin: 6px 0 10px; }
+figure.ign-img figcaption { font-size: .75rem; color: var(--gris); }
+figure.ign-img.croquis img { background: #fff; }   /* croquis noir sur blanc, lisible aussi en mode sombre */

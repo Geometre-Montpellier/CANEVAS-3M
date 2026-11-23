@@ -362,7 +362,7 @@
     const annuler = (msg) => { caseEl.checked = false; toast(msg); };
     if (!etat) { annuler('Indiquez l\'état du repère'); $('#f-etat').focus(); return; }
     if (manque.length && !ETATS_SANS_PHOTO.includes(etat)) { annuler('Il manque : ' + manque.map(r => ROLES[r].toLowerCase()).join(' et ')); return; }
-    const patch = { statut: 'fait', etat, commentaire: $('#f-comm').value.trim(), visitePar: S.nom(), visiteLe: new Date().toISOString() };
+    const patch = { statut: 'fait', etat, commentaire: $('#f-comm').value.trim(), visitePar: S.nom(), visiteAppareil: S.appareil(), visiteLe: new Date().toISOString() };
     const details = {};
     if (maPos) { patch.gps = maPos; details.ecart = Math.round(distance(maPos, PAR_ID[id])); details.gps = maPos; }
     await S.maj(id, patch, '✔ Visite terminée – ' + (ETAT_LIB[etat] || etat), details);
@@ -375,7 +375,7 @@
 
   async function rouvrir(id, caseEl) {
     if (!confirm('Rouvrir cette visite pour la refaire ?\n\nLa visite terminée précédente reste archivée telle quelle (fiche et photos) : la nouvelle visite s\'y ajoutera, elle ne la remplacera pas.')) { caseEl.checked = true; return; }
-    await S.effacerChamps(id, ['statut', 'visitePar', 'visiteLe'], '↺ Visite rouverte');
+    await S.effacerChamps(id, ['statut', 'visitePar', 'visiteAppareil', 'visiteLe'], '↺ Visite rouverte');
     toast('Visite rouverte');
   }
 

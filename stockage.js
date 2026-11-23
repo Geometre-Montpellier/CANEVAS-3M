@@ -121,8 +121,8 @@
     // action : texte lisible (« État : Endommagé », « Visite terminée »…) ; à défaut, la liste des champs modifiés.
     async maj(id, patch, action, details) {
       const le = new Date().toISOString();
-      const ligne = Object.assign({ le, par: S.nom(), action: action || ('Modification : ' + Object.keys(patch).join(', ')) }, details || {});
-      const p = Object.assign({}, patch, { majPar: ligne.par, maj: le });
+      const ligne = Object.assign({ le, par: S.nom(), action: action || ('Modification : ' + Object.keys(patch).join(', ')) }, details || {}, S.trace());
+      const p = Object.assign({}, patch, { majPar: ligne.par, majAppareil: ligne.appareil, maj: le });
       if (DEMO) { const o = demoLire(); o[id] = Object.assign(o[id] || {}, p); journaliser(o[id], ligne); demoEcrire(o); demoNotifier(); return; }
       p.journal = firebase.firestore.FieldValue.arrayUnion(ligne);
       db.collection('visites').doc(id).set(p, { merge: true }).catch(e => alert('Enregistrement refusé : ' + e.message));
@@ -130,7 +130,7 @@
 
     async effacerChamps(id, champs, action) {
       const le = new Date().toISOString();
-      const ligne = { le, par: S.nom(), action: action || ('Effacé : ' + champs.join(', ')) };
+      const ligne = Object.assign({ le, par: S.nom(), action: action || ('Effacé : ' + champs.join(', ')) }, S.trace());
       if (DEMO) { const o = demoLire(); o[id] = o[id] || {}; champs.forEach(c => delete o[id][c]); o[id].maj = le; o[id].majPar = ligne.par; journaliser(o[id], ligne); demoEcrire(o); demoNotifier(); return; }
       const p = { maj: le, majPar: ligne.par, journal: firebase.firestore.FieldValue.arrayUnion(ligne) };
       champs.forEach(c => p[c] = firebase.firestore.FieldValue.delete());
@@ -140,12 +140,12 @@
     // Photo : copie sur le téléphone + déclaration dans la visite, puis envoi (immédiat ou différé).
     async ajouterPhoto(id, blob, meta) {
       const cle = id + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-      const desc = { cle, role: meta.role || 'autre', date: new Date().toISOString(), auteur: S.nom() };
+      const desc = Object.assign({ cle, role: meta.role || 'autre', date: new Date().toISOString(), auteur: S.nom() }, S.trace());
       // Traçabilité de la prise de vue (champs présents seulement s'ils sont connus)
       for (const k of ['gps', 'ecart', 'gpsPhoto', 'ecartPhoto', 'datePhoto']) if (meta[k] != null) desc[k] = meta[k];
       if (desc.gps) for (const k of Object.keys(desc.gps)) if (desc.gps[k] == null) delete desc.gps[k];
       const NOMS = { pres: 'Photo de près', loin: 'Photo de loin', autre: 'Autre photo' };
-      const ligne = Object.assign({ le: desc.date, par: desc.auteur, action: NOMS[desc.role] + ' ajoutée', photo: cle }, meta.ecart != null ? { ecart: meta.ecart } : {});
+      const ligne = Object.assign({ le: desc.date, par: desc.auteur, action: NOMS[desc.role] + ' ajoutée', photo: cle }, meta.ecart != null ? { ecart: meta.ecart } : {}, S.trace());
       await tx(['blobs', 'meta'], 'readwrite', (b, m) => {
         b.put({ cle, blob });
         m.put(Object.assign({ id, taille: blob.size, envoye: DEMO }, desc));
@@ -174,7 +174,7 @@
           const blob = await blobDe(m.cle);
           if (!blob) { m.envoye = true; await majMeta(m); continue; }
           const doc = { repere: m.id, cle: m.cle, role: m.role, date: m.date, auteur: m.auteur, data: await blobVersBase64(blob) };
-          for (const k of ['gps', 'ecart', 'gpsPhoto', 'ecartPhoto', 'datePhoto']) if (m[k] != null) doc[k] = m[k];
+          for (const k of ['gps', 'ecart', 'gpsPhoto', 'ecartPhoto', 'datePhoto', 'appareil', 'modele']) if (m[k] != null) doc[k] = m[k];
           try {
             // On attend la confirmation du serveur (délai max 2 min) avant de marquer la photo comme envoyée
             await Promise.race([
@@ -203,7 +203,7 @@
         if (S._urls[desc.cle]) delete S._urls[desc.cle];
       }
       const NOMS = { pres: 'Photo de près', loin: 'Photo de loin', autre: 'Autre photo' };
-      const ligne = { le: new Date().toISOString(), par: S.nom(), action: NOMS[desc.role || 'autre'] + (archivee ? ' retirée de la fiche (conservée dans la visite archivée)' : ' supprimée'), photo: desc.cle };
+      const ligne = Object.assign({ le: new Date().toISOString(), par: S.nom(), action: NOMS[desc.role || 'autre'] + (archivee ? ' retirée de la fiche (conservée dans la visite archivée)' : ' supprimée'), photo: desc.cle }, S.trace());
       if (DEMO) {
         const o = demoLire(); o[id] = o[id] || {};
         if (o[id].photos) o[id].photos = o[id].photos.filter(x => x.cle !== desc.cle);
@@ -252,7 +252,7 @@
       const cles = photos.map(p => p.cle);
       const pointages = {};
       for (const c of cles) if (v.pointages && v.pointages[c]) pointages[c] = v.pointages[c];
-      const copie = Object.assign({}, v, { repere: id, photos, pointages, archiveLe: le, archivePar: S.nom() });
+      const copie = Object.assign({}, v, { repere: id, photos, pointages, archiveLe: le, archivePar: S.nom(), archiveAppareil: S.appareil(), archiveModele: S.modele() });
       delete copie.clesArchivees; delete copie.journal;
       if (DEMO) {
         const a = JSON.parse(localStorage.getItem('demo-archives') || '[]'); a.push(copie); localStorage.setItem('demo-archives', JSON.stringify(a));
@@ -304,7 +304,46 @@
 
     nom() {
       return localStorage.getItem('nom-terrain') || (user && user.email ? user.email.split('@')[0] : 'inconnu');
-    }
+    },
+
+    // Identifiant du téléphone (traçabilité, jamais affiché) : tiré au hasard à la première ouverture et
+    // conservé ensuite. Il ne dépend pas du prénom saisi : il permet de savoir après coup quel appareil
+    // a fait quoi, même si quelqu'un se déclare sous le prénom d'un collègue.
+    appareil() {
+      let a = null;
+      try { a = localStorage.getItem('id-appareil'); } catch (e) {}
+      if (!a) {
+        const h = (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(16) + Math.random().toString(16).slice(2)).replace(/-/g, '');
+        a = h.slice(0, 8).toUpperCase();
+        try { localStorage.setItem('id-appareil', a); localStorage.setItem('id-appareil-cree', new Date().toISOString()); } catch (e) {}
+      }
+      return a;
+    },
+    // Modèle du téléphone, lu une fois (Chrome Android donne le modèle exact, iPhone seulement la version d'iOS)
+    modele() {
+      try { return localStorage.getItem('modele-appareil') || modeleUA(); } catch (e) { return modeleUA(); }
+    },
+    // Champs ajoutés à chaque écriture
+    trace() { return { appareil: S.appareil(), modele: S.modele() }; }
   };
+  function modeleUA() {
+    const ua = navigator.userAgent;
+    let m = ua.match(/Android [\d.]+(?:; ([^;)]+))?/);
+    if (m) return (m[1] && m[1] !== 'K' ? m[1] + ', ' : '') + m[0].split(';')[0];
+    m = ua.match(/(iPhone|iPad).*?OS ([\d_]+)/);
+    if (m) return m[1] + ', iOS ' + m[2].replace(/_/g, '.');
+    return (navigator.platform || 'appareil inconnu');
+  }
+  (async () => {
+    try {
+      S.appareil();
+      if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+        const v = await navigator.userAgentData.getHighEntropyValues(['model', 'platformVersion']);
+        const pf = navigator.userAgentData.platform || '';
+        const lib = [v.model, pf + (v.platformVersion ? ' ' + v.platformVersion.split('.')[0] : '')].filter(Boolean).join(', ');
+        if (lib) localStorage.setItem('modele-appareil', lib);
+      }
+    } catch (e) {}
+  })();
   window.Stockage = S;
 })();

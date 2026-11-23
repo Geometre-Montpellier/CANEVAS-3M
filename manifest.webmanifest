@@ -1,7 +1,7 @@
 {
-  "name": "Repères IGN – Lot 2 Métropole",
+  "name": "Repères IGN",
   "short_name": "Repères 3M",
-  "description": "Vérification de terrain des repères géodésiques et de nivellement IGN – lot 2 Ouest et Sud",
+  "description": "Vérification de terrain des repères géodésiques et de nivellement IGN",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

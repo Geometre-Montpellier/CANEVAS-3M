@@ -664,35 +664,6 @@
     clearTimeout(toast._t); toast._t = setTimeout(() => el.hidden = true, 2600);
   }
 
-  function telecharger(nom, contenu, type) {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([contenu], { type }));
-    a.download = nom; document.body.appendChild(a); a.click(); a.remove();
-  }
-
-  const lien = (ps) => ps.map(p => `${p.auteur || '?'} ${fmtDate(p.date)}`).join(' | ');
-  function lignesExport() {
-    return REPERES.map(r => {
-      const v = visites[r.id] || {};
-      return {
-        id: r.id, type: r.t, nom: r.n, commune: r.c, etat_ign: r.e, fiche_ign: r.u,
-        statut: v.statut === 'fait' ? 'visite_terminee' : 'a_faire',
-        etat_constate: ETAT_LIB[v.etat] || '', commentaire: v.commentaire || '',
-        ciel_gnss: libChamp(CHAMPS[0], v.ciel), acces: libChamp(CHAMPS[1], v.acces),
-        conforme_ign: libChamp(CHAMPS[2], v.conforme), menace: libChamp(CHAMPS[3], v.menace),
-        visite_par: v.visitePar || '', date_visite: v.visiteLe || '',
-        gps_visite_lat: v.gps ? v.gps.lat : '', gps_visite_lon: v.gps ? v.gps.lon : '', gps_precision_m: v.gps ? v.gps.acc : '',
-        ecart_gps_ign_m: v.gps ? Math.round(distance(v.gps, r)) : '',
-        journal: (v.journal || []).map(h => `${fmtDate(h.le)} ${h.par} : ${h.action}`).join(' | '),
-        nb_photos: (v.photos || []).length,
-        photo_pres: lien((v.photos || []).filter(p => p.role === 'pres')),
-        photo_loin: lien((v.photos || []).filter(p => p.role === 'loin')),
-        autres_photos: lien((v.photos || []).filter(p => !p.role || p.role === 'autre')),
-        lat: r.lat, lon: r.lon
-      };
-    });
-  }
-
   function initUI() {
     document.querySelectorAll('[data-ferme]').forEach(b => b.onclick = () => {
       $('#' + b.dataset.ferme).hidden = true;
@@ -731,18 +702,7 @@
     };
     $('#btn-menu').addEventListener('click', majEnvoi);
     $('#btn-deconnexion').onclick =() => { $('#menu').hidden = true; S.deconnexion(); };
-
-    const stamp = () => new Date().toISOString().slice(0, 10);
-    $('#btn-export-geojson').onclick = () => {
-      const fc = { type: 'FeatureCollection', name: 'reperes_ign_lot2', features: lignesExport().map(p => ({
-        type: 'Feature', geometry: { type: 'Point', coordinates: [p.lon, p.lat] }, properties: p })) };
-      telecharger(`reperes_ign_lot2_${stamp()}.geojson`, JSON.stringify(fc, null, 1), 'application/geo+json');
-    };
-    $('#btn-export-csv').onclick = () => {
-      const L_ = lignesExport(); const cols = Object.keys(L_[0]);
-      const cell = (x) => { const s = String(x == null ? '' : x); return /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-      const csv = '﻿' + [cols.join(';')].concat(L_.map(l => cols.map(c => cell(l[c])).join(';'))).join('\r\n');
-      telecharger(`reperes_ign_lot2_${stamp()}.csv`, csv, 'text/csv');
-    };
+    // Plus d'export depuis le téléphone : le tableau et la couche SIG du livrable sont produits
+    // sur le serveur du cabinet par rapatrier-photos.ps1 (visites_lot2.csv / .geojson).
   }
 })();

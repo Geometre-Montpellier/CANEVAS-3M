@@ -105,7 +105,7 @@
     if (S.demo) $('#btn-deconnexion').textContent = 'Changer de prénom';
     $('#menu-user').textContent = S.demo ? 'Mode local (relevés gardés sur ce téléphone)' : 'En ligne : relevés partagés en direct avec toute l\'équipe';
     $('#menu-nom').value = localStorage.getItem('nom-terrain') || '';
-    if (!appDemarree) { initCarte(); initUI(); appDemarree = true; }
+    if (!appDemarree) { initCarte(); initUI(); majTrace(); appDemarree = true; }
     desabonner = S.ecouter((v) => { visites = v || {}; rafraichir(); });
     majEnvoi();
     S.onFileChange = () => { majEnvoi(); if (ouvert) afficherFiche(ouvert, true); };
@@ -683,6 +683,22 @@
   let modeListe = 'proches';
   try { if (localStorage.getItem('mode-liste') === 'cheminement' && CHEMIN.length) modeListe = 'cheminement'; } catch (e) {}
   const estFait = id => !!(visites[id] && visites[id].statut === 'fait');
+  // Tracé routier du cheminement sur la carte, affiché ou masqué par le bouton « Itinéraire optimisé »
+  let coucheTrace = null, afficherTrace = false;
+  try { afficherTrace = localStorage.getItem('trace') === '1'; } catch (e) {}
+  function majTrace() {
+    const pts = window.CHEMINEMENT_TRACE || [];
+    if (!map || !pts.length) return;
+    const chip = $('#chip-trace');
+    chip.hidden = false; chip.classList.toggle('actif', afficherTrace);
+    chip.onclick = () => { afficherTrace = !afficherTrace; try { localStorage.setItem('trace', afficherTrace ? '1' : '0'); } catch (e) {} majTrace(); };
+    if (!coucheTrace) coucheTrace = L.layerGroup([
+      L.polyline(pts, { color: '#fff', weight: 7, opacity: 0.7, interactive: false }),
+      L.polyline(pts, { color: '#7b3fe4', weight: 3.5, opacity: 0.9, interactive: false })
+    ]);
+    if (afficherTrace) { if (!map.hasLayer(coucheTrace)) coucheTrace.addTo(map); }
+    else if (map.hasLayer(coucheTrace)) map.removeLayer(coucheTrace);
+  }
   // Prochain repère à faire après « depuis » (ou depuis le début), en reprenant au début si besoin
   function suivantChemin(depuis) {
     const k0 = depuis != null && RANG[depuis] != null ? RANG[depuis] + 1 : 0;

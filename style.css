@@ -65,9 +65,8 @@ label input, label select, label textarea, #recherche, #sel-fond, #sel-theme { d
 .mq-rond.s-fait { background: var(--fait); } .mq-tri.s-fait { border-bottom-color: var(--fait); }
 .mq-rond.s-probleme { background: var(--probleme); } .mq-tri.s-probleme { border-bottom-color: var(--probleme); }
 /* Repère non retrouvé par l'IGN : point blanc au centre du pointeur */
-.mq { position: relative; }
-.point-ign { position: absolute; left: 10px; top: 5px; width: 6px; height: 6px; border-radius: 50%; background: #fff; pointer-events: none; }
-.point-tri { top: 10px; }
+.point-ign { position: absolute; left: 10px; top: 10px; width: 6px; height: 6px; border-radius: 50%; background: #fff; pointer-events: none; }
+.point-tri { top: 11px; }
 
 /* Panneaux bas */
 .panneau { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1100; background: #fff; border-radius: 16px 16px 0 0; box-shadow: 0 -4px 18px rgba(0,0,0,.25); max-height: 78vh; overflow-y: auto; padding: 8px 16px calc(16px + var(--sab)); -webkit-overflow-scrolling: touch; }

@@ -37,7 +37,7 @@
 <section id="ecran-app" class="ecran" hidden>
   <div id="bandeau">
     <img src="icons/logo-siragusa.png" alt="Siragusa Géomètres-Experts">
-    <span><b>Repères IGN</b><br>Montpellier Méditerranée Métropole</span>
+    <span><b>Repères IGN</b><br><i id="bandeau-3m">Montpellier Méditerranée Métropole</i></span>
   </div>
   <header id="barre">
     <button id="btn-menu" class="icone" aria-label="Menu">☰</button>
@@ -59,7 +59,8 @@
   <!-- Légende -->
   <div id="legende">
     <span><i class="pastille afaire"></i>À faire</span>
-    <span><i class="pastille fait"></i>Visite terminée</span>  </div>
+    <span><i class="pastille fait"></i>Visite terminée</span>
+  </div>
 
   <!-- Fiche repère (panneau bas) -->
   <div id="fiche" class="panneau" hidden>
@@ -116,6 +117,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
 <script src="data/reperes-lot2.js"></script>
+<script src="data/photos-ign.js"></script>
+<script src="data/fiches-ign.js"></script>
 <script src="stockage.js"></script>
 <script src="app.js"></script>
 </body>

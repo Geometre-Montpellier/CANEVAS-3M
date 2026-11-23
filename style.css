@@ -64,7 +64,10 @@ label input, label select, label textarea, #recherche, #sel-fond, #sel-theme { d
 .mq-rond.s-reserve { background: var(--reserve); } .mq-tri.s-reserve { border-bottom-color: var(--reserve); }
 .mq-rond.s-fait { background: var(--fait); } .mq-tri.s-fait { border-bottom-color: var(--fait); }
 .mq-rond.s-probleme { background: var(--probleme); } .mq-tri.s-probleme { border-bottom-color: var(--probleme); }
-.mq-rond.s-afaire.ign-alerte { background: #fff; border: 3px dashed var(--afaire); }
+/* Repère non retrouvé par l'IGN : point blanc au centre du pointeur */
+.mq { position: relative; }
+.point-ign { position: absolute; left: 10px; top: 5px; width: 6px; height: 6px; border-radius: 50%; background: #fff; pointer-events: none; }
+.point-tri { top: 10px; }
 
 /* Panneaux bas */
 .panneau { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1100; background: #fff; border-radius: 16px 16px 0 0; box-shadow: 0 -4px 18px rgba(0,0,0,.25); max-height: 78vh; overflow-y: auto; padding: 8px 16px calc(16px + var(--sab)); -webkit-overflow-scrolling: touch; }
@@ -224,3 +227,12 @@ details.ign summary { cursor: pointer; font-weight: 600; color: var(--bleu); }
 [data-theme="dark"] .emplacement.manque { border-color: var(--orange); background: #3a2a10; }
 [data-theme="dark"] .emplacement.manque .empl-titre, [data-theme="dark"] .emplacement.manque .photo-ajout { color: #ffb27a; }
 [data-theme="dark"] .emplacement.manque .photo-ajout { border-color: var(--orange); background: #4a2f12; }
+/* Bandeau : « Montpellier Méditerranée Métropole », remplacé par « 3M » si la place manque (gros caractères) */
+#bandeau > span { white-space: nowrap; }
+#bandeau-3m { font-style: normal; }
+#bandeau img { flex-shrink: 0; }
+/* Données IGN : photo de la fiche + support / repèrements */
+.photo-ign { display: block; width: 100%; max-width: 400px; border-radius: 8px; margin: 6px 0; }
+dl.ign-fiche { margin: 6px 0; font-size: .85rem; }
+dl.ign-fiche dt { color: var(--gris); margin-top: 6px; }
+dl.ign-fiche dd { margin: 0; font-weight: 600; }

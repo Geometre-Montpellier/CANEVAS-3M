@@ -3,6 +3,11 @@
   const S = window.Stockage;
   const REPERES = window.REPERES;
   const PAR_ID = Object.fromEntries(REPERES.map(r => [r.id, r]));
+  // Extraits des fiches IGN (générés sur le PC par extraire-photos-ign.ps1 et extraire-textes-ign) :
+  // repères qui ont une photo sur leur fiche, et support / partie support / repèrements des NGF
+  const PHOTOS_IGN = new Set(window.PHOTOS_IGN || []);
+  const FICHES_IGN = window.FICHES_IGN || {};
+  const apos = (s) => String(s || '').replace(/[’‘`´]/g, "'");   // apostrophes typographiques ≡ droites
   const ETATS = [
     ['bon', 'Bon état'],
     ['endommage', 'Endommagé'],
@@ -15,9 +20,11 @@
   // Infos de terrain en un geste (boutons à choix unique ; retoucher le bouton choisi l'annule)
   const CHAMPS = [
     { cle: 'ciel', titre: 'Ciel pour le GNSS', choix: [['degage', 'Dégagé'], ['partiel', 'Masques partiels'], ['masque', 'Masqué']] },
-    { cle: 'acces', titre: 'Accès', choix: [['libre', 'Libre'], ['prive', 'Privé'], ['cle', 'Clé / gardien'], ['dangereux', 'Circulation dangereuse']] },
+    // « Clé / gardien » a été fusionné dans « Privé / Non accessible » : une ancienne valeur 'cle' s'affiche comme 'prive'
+    { cle: 'acces', titre: 'Accès', choix: [['libre', 'Libre'], ['prive', 'Privé / Non accessible'], ['dangereux', 'Circulation dangereuse']], alias: { cle: 'prive' } },
     { cle: 'conforme', titre: 'Conforme à la description IGN', choix: [['oui', 'Oui'], ['non', 'Non']] },
-    { cle: 'menace', titre: 'Menace à proximité', choix: [['aucune', 'Aucune'], ['chantier', 'Chantier'], ['demolition', 'Démolition / aménagement']] }
+    // « Démolition / aménagement » a été fusionné dans « Chantier (actuel ou à venir) »
+    { cle: 'menace', titre: 'Menace à proximité', choix: [['aucune', 'Aucune'], ['chantier', 'Chantier (actuel ou à venir)']], alias: { demolition: 'chantier' } }
   ];
   const libChamp = (c, v) => ((c.choix.find(x => x[0] === v) || [])[1]) || '';
   // Photos exigées pour terminer la visite : de près et de loin, dans tous les cas. Même si le repère est
@@ -98,7 +105,19 @@
     desabonner = S.ecouter((v) => { visites = v || {}; rafraichir(); });
     majEnvoi();
     S.onFileChange = () => { majEnvoi(); if (ouvert) afficherFiche(ouvert, true); };
+    ajusterBandeau();
   }
+
+  // Bandeau : nom complet de la Métropole s'il tient à côté du logo, sinon « 3M » (téléphone en gros caractères)
+  function ajusterBandeau() {
+    const el = $('#bandeau-3m'); if (!el) return;
+    el.textContent = 'Montpellier Méditerranée Métropole';
+    const bandeau = $('#bandeau'), logo = bandeau.querySelector('img'), t = el.parentElement.getBoundingClientRect();
+    if (!t.width) return;   // bandeau pas encore affiché
+    if (t.left < logo.getBoundingClientRect().right + 8 || t.right > bandeau.getBoundingClientRect().right - 8) el.textContent = '3M';
+  }
+  window.addEventListener('resize', ajusterBandeau);
+  $('#bandeau img').addEventListener('load', ajusterBandeau);
 
   // ---------------- Carte ----------------
   function initCarte() {
@@ -158,11 +177,12 @@
 
   function icone(r, v) {
     const sv = statutVisuel(v);
-    const nonRetrouveIGN = r.e && r.e !== 'Bon état' ? ' ign-alerte' : '';
+    // Repère « non retrouvé » (ou en mauvais état) d'après l'IGN : même pointeur, avec un point blanc au centre
+    const nonRetrouveIGN = r.e && r.e !== 'Bon état';
     const forme = r.t === 'RBF' ? 'tri' : 'rond';
     return L.divIcon({
       className: 'mq', iconSize: [26, 26], iconAnchor: [13, 13],
-      html: `<div class="mq-${forme} s-${sv}${nonRetrouveIGN}"></div>`
+      html: `<div class="mq-${forme} s-${sv}"></div>${nonRetrouveIGN ? `<i class="point-ign point-${forme}"></i>` : ''}`
     });
   }
 
@@ -226,6 +246,7 @@
       if (urls[p.cle] && pt) try { urls[p.cle] = await urlMarquee(urls[p.cle], pt); } catch (e) { }
     }
     if (ouvert !== id) return;   // une autre fiche a été ouverte entre-temps
+    const ficheIgn = FICHES_IGN[id];   // support / partie support / repèrements relevés sur la fiche IGN (NGF)
     const precisionPos = r.t === 'NGF' ? 'Position IGN approchée (~10 m) : cherchez l\'édifice décrit.' : '';
 
     const libStatut = {
@@ -263,7 +284,9 @@
         <a class="btn" href="https://www.google.com/maps/dir/?api=1&destination=${r.lat},${r.lon}&travelmode=driving" target="_blank" rel="noopener"><svg width="18" height="24" viewBox="0 0 24 32" aria-hidden="true"><path d="M12 0C5.4 0 0 5.3 0 11.9 0 20.8 12 32 12 32s12-11.2 12-20.1C24 5.3 18.6 0 12 0z" fill="#ea4335"/><circle cx="12" cy="11.8" r="4.6" fill="#a50e0e"/></svg> Itinéraire</a>      </div>
       <details class="ign">
         <summary>Données IGN</summary>
+        ${PHOTOS_IGN.has(r.id) ? `<img class="photo-ign" src="data/photos-ign/${r.id}.jpg" loading="lazy" alt="Photo du repère (fiche IGN)">` : '<p class="petit">Pas de photo sur la fiche IGN.</p>'}
         <p class="pre">${esc(r.l)}</p>
+        ${ficheIgn ? `<dl class="ign-fiche">${[['Support', ficheIgn.s && !apos(r.l).includes(apos(ficheIgn.s)) ? ficheIgn.s : ''], ['Partie support', ficheIgn.p], ['Repèrements', ficheIgn.r]].filter(x => x[1]).map(([t, x]) => `<dt>${t}</dt><dd>${esc(x)}</dd>`).join('')}</dl>` : ''}
         <p>État IGN : <b class="${r.e !== 'Bon état' ? 'alerte' : ''}">${esc(r.e)}</b></p>
         <p class="petit">${precisionPos} WGS84 : ${r.lat.toFixed(6)}, ${r.lon.toFixed(6)}</p>
       </details>
@@ -283,7 +306,7 @@
         </select>
       </label>
       ${CHAMPS.map(c => `<div class="champ"><div class="champ-titre">${c.titre}</div><div class="choix" data-champ="${c.cle}">${
-        c.choix.map(([k, l]) => `<button type="button" class="choix-btn ${v[c.cle] === k ? 'actif' : ''}" data-val="${k}">${l}</button>`).join('')}</div></div>`).join('')}
+        c.choix.map(([k, l]) => `<button type="button" class="choix-btn ${((c.alias || {})[v[c.cle]] || v[c.cle]) === k ? 'actif' : ''}" data-val="${k}">${l}</button>`).join('')}</div></div>`).join('')}
       <label>Commentaire (repris sur la fiche de visite)
         <textarea id="f-comm" rows="3" placeholder="État du repère, accès, environnement…">${esc(v.commentaire || '')}</textarea>
       </label>

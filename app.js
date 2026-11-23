@@ -20,8 +20,10 @@
     { cle: 'menace', titre: 'Menace à proximité', choix: [['aucune', 'Aucune'], ['chantier', 'Chantier'], ['demolition', 'Démolition / aménagement']] }
   ];
   const libChamp = (c, v) => ((c.choix.find(x => x[0] === v) || [])[1]) || '';
-  const ETATS_SANS_PHOTO = ['introuvable', 'inaccessible', 'detruit'];
-  const PROBLEMES = ['detruit', 'introuvable'];
+  // Photos exigées pour terminer la visite : de près et de loin, dans tous les cas. Même si le repère est
+  // introuvable, détruit ou inaccessible (l'emplacement attendu et l'environnement) : c'est la preuve pour le
+  // client qu'on est allé sur place.
+  const photosRequises = () => ['pres', 'loin'];
   // Photos attendues pour la fiche de visite : une de près, une de loin, puis autant d'« autres » que voulu.
   const ROLES = { pres: 'Photo de près', loin: 'Photo de loin', autre: 'Autre photo' };
   const TERMINEES = { afficher: 'Visites terminées : affichées', masquer: 'Visites terminées : masquées', seules: 'Visites terminées seulement' };
@@ -149,9 +151,9 @@
   }
 
   function statutVisuel(v) {
-    if (!v) return 'afaire';
-    if (v.statut === 'fait') return PROBLEMES.includes(v.etat) ? 'probleme' : 'fait';
-    return 'afaire';   // les anciennes réservations (fonction retirée) comptent comme « à faire »
+    // Deux statuts seulement : à faire / visite terminée (l'état constaté, même « introuvable », n'y change rien).
+    // Les anciennes réservations (fonction retirée) comptent comme « à faire ».
+    return v && v.statut === 'fait' ? 'fait' : 'afaire';
   }
 
   function icone(r, v) {
@@ -228,9 +230,7 @@
 
     const libStatut = {
       afaire: 'À faire',
-      fait: `Visite terminée par ${esc(v.visitePar || '?')} le ${fmtDate(v.visiteLe)}`,
-      probleme: `${esc(ETAT_LIB[v.etat] || '')} – constaté par ${esc(v.visitePar || '?')} le ${fmtDate(v.visiteLe)}`
-    }[sv];
+      fait: `Visite terminée par ${esc(v.visitePar || '?')} le ${fmtDate(v.visiteLe)}`    }[sv];
 
     // Photos rangées par rôle (près / loin / autres). Les anciennes photos sans rôle comptent comme « autre ».
     const indexees = photos.map((p, i) => Object.assign({ i }, p));
@@ -241,7 +241,7 @@
     const emplacement = (role) => {
       const ph = parRole(role).slice(-1)[0];
       const contenu = ph ? vignette(ph) : '';
-      return `<div class="emplacement ${contenu ? 'rempli' : ''}">
+      return `<div class="emplacement ${contenu ? 'rempli' : ''}" data-role="${role}">
         <div class="empl-titre">${ROLES[role]} ${contenu ? '✔' : ''}</div>
         ${contenu}
         <button class="photo-ajout" data-role="${role}">📷 ${contenu ? 'Reprendre' : 'Ajouter'}</button>
@@ -268,7 +268,7 @@
         <p class="petit">${precisionPos} WGS84 : ${r.lat.toFixed(6)}, ${r.lon.toFixed(6)}</p>
       </details>
 
-      <h3>Photos de la visite</h3>
+      <h3>Photos de la visite <span id="photos-a-prendre"></span></h3>
       <div class="emplacements">${emplacement('pres')}${emplacement('loin')}</div>
       <div class="photos">
         ${parRole('autre').map(vignette).join('')}
@@ -338,6 +338,19 @@
     const b = $('#a-remplir');
     b.className = n ? 'a-remplir' : 'a-remplir complet';
     b.textContent = n ? `${n} point${n > 1 ? 's' : ''} à remplir` : '✔ complet';
+    // Photos exigées (de près / de loin) : orange tant qu'elles manquent ; « Autre photo » reste bleu, elle est facultative.
+    const requises = photosRequises(etat.value);
+    let p = 0;
+    document.querySelectorAll('#fiche .emplacement').forEach(e => {
+      const manque = requises.includes(e.dataset.role) && !e.classList.contains('rempli');
+      e.classList.toggle('manque', manque); if (manque) p++;
+    });
+    const bp = $('#photos-a-prendre');
+    if (bp) {
+      const prises = document.querySelectorAll('#fiche .emplacement.rempli').length;
+      bp.className = p ? 'a-remplir' : (prises ? 'a-remplir complet' : '');
+      bp.textContent = p ? `${p} photo${p > 1 ? 's' : ''} à prendre` : (prises ? '✔ complet' : '');
+    }
   }
 
   // Visites terminées archivées pour ce repère (la plus récente en premier).
@@ -363,10 +376,10 @@
     const etat = $('#f-etat').value;
     const v = visites[id] || {};
     const toutes = (v.photos || []).map(p => p.role || 'autre');
-    const manque = ['pres', 'loin'].filter(r => !toutes.includes(r));
+    const manque = photosRequises(etat).filter(r => !toutes.includes(r));
     const annuler = (msg) => { caseEl.checked = false; toast(msg); };
     if (!etat) { annuler('Indiquez l\'état du repère'); $('#f-etat').focus(); return; }
-    if (manque.length && !ETATS_SANS_PHOTO.includes(etat)) { annuler('Il manque : ' + manque.map(r => ROLES[r].toLowerCase()).join(' et ')); return; }
+    if (manque.length) { annuler('Il manque : ' + manque.map(r => ROLES[r].toLowerCase()).join(' et ')); return; }
     const patch = { statut: 'fait', etat, commentaire: $('#f-comm').value.trim(), visitePar: S.nom(), visiteAppareil: S.appareil(), visiteLe: new Date().toISOString() };
     const details = {};
     if (maPos) { patch.gps = maPos; details.ecart = Math.round(distance(maPos, PAR_ID[id])); details.gps = maPos; }

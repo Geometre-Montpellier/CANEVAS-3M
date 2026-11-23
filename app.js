@@ -257,10 +257,10 @@
         <div class="statut s-${sv}">${libStatut}</div>
       </div>
       <div class="actions">
-        <a class="btn fiche-ign" href="${esc(r.u)}" target="_blank" rel="noopener">📄 Ouvrir la fiche IGN originale</a>
+        <a class="btn fiche-ign" href="${esc(r.u)}" target="_blank" rel="noopener">📄 Fiche IGN originale</a>
       </div>
       <div class="actions">
-        <a class="btn" href="https://www.google.com/maps/dir/?api=1&destination=${r.lat},${r.lon}&travelmode=driving" target="_blank" rel="noopener">🧭 Itinéraire</a>      </div>
+        <a class="btn" href="https://www.google.com/maps/dir/?api=1&destination=${r.lat},${r.lon}&travelmode=driving" target="_blank" rel="noopener"><svg width="18" height="24" viewBox="0 0 24 32" aria-hidden="true"><path d="M12 0C5.4 0 0 5.3 0 11.9 0 20.8 12 32 12 32s12-11.2 12-20.1C24 5.3 18.6 0 12 0z" fill="#ea4335"/><circle cx="12" cy="11.8" r="4.6" fill="#a50e0e"/></svg> Itinéraire</a>      </div>
       <details class="ign">
         <summary>Données IGN</summary>
         <p class="pre">${esc(r.l)}</p>
@@ -275,8 +275,8 @@
         <button class="photo-ajout" data-role="autre">📷<br>Autre photo</button>
       </div>
 
-      <h3>État du repère</h3>
-      <label>État constaté
+      <h3>État du repère <span id="a-remplir"></span></h3>
+      <label class="champ-etat">État constaté
         <select id="f-etat">
           <option value="">— choisir —</option>
           ${ETATS.map(([k, l]) => `<option value="${k}" ${v.etat === k ? 'selected' : ''}>${l}</option>`).join('')}
@@ -310,11 +310,12 @@
     });
     document.querySelectorAll('#fiche img[data-i], #fiche .ailleurs[data-i]').forEach(el => el.onclick = () => voirPhoto(id, +el.dataset.i));
     // Enregistrement automatique de l'état et du commentaire
-    $('#f-etat').onchange = () => S.maj(id, { etat: $('#f-etat').value }, 'État : ' + (ETAT_LIB[$('#f-etat').value] || '—') + (v.etat ? ' (avant : ' + (ETAT_LIB[v.etat] || v.etat) + ')' : ''));
+    $('#f-etat').onchange = () => { majARemplir(); S.maj(id, { etat: $('#f-etat').value }, 'État : ' + (ETAT_LIB[$('#f-etat').value] || '—') + (v.etat ? ' (avant : ' + (ETAT_LIB[v.etat] || v.etat) + ')' : '')); };
     document.querySelectorAll('#fiche .choix').forEach(g => g.querySelectorAll('.choix-btn').forEach(b => b.onclick = () => {
       const c = CHAMPS.find(x => x.cle === g.dataset.champ);
       const nouveau = b.classList.contains('actif') ? null : b.dataset.val;
       g.querySelectorAll('.choix-btn').forEach(x => x.classList.toggle('actif', x === b && !!nouveau));
+      majARemplir();
       if (nouveau) S.maj(id, { [c.cle]: nouveau }, c.titre + ' : ' + libChamp(c, nouveau));
       else S.effacerChamps(id, [c.cle], c.titre + ' : effacé');
     }));
@@ -323,7 +324,20 @@
       if (c !== (v.commentaire || '')) S.maj(id, { commentaire: c }, 'Commentaire : « ' + (c.length > 80 ? c.slice(0, 80) + '…' : c) + ' »');
     };
     $('#f-terminee').onchange = (e) => e.target.checked ? terminer(id, e.target) : rouvrir(id, e.target);
+    majARemplir();
     afficherArchives(id, !rafraichissement);
+  }
+
+  // Points de l'état du repère encore vides : surlignés, et comptés à côté du titre
+  function majARemplir() {
+    const etat = $('#f-etat'); if (!etat) return;
+    let n = 0;
+    const marquer = (el, vide) => { el.classList.toggle('vide', vide); el.classList.toggle('rempli', !vide); if (vide) n++; };
+    marquer($('#fiche .champ-etat'), !etat.value);
+    document.querySelectorAll('#fiche .choix').forEach(g => marquer(g.closest('.champ'), !g.querySelector('.choix-btn.actif')));
+    const b = $('#a-remplir');
+    b.className = n ? 'a-remplir' : 'a-remplir complet';
+    b.textContent = n ? `${n} point${n > 1 ? 's' : ''} à remplir` : '✔ complet';
   }
 
   // Visites terminées archivées pour ce repère (la plus récente en premier).
@@ -537,9 +551,10 @@
     return null;
   }
 
-  // Réduit la photo à 1600 px puis baisse la qualité jusqu'à tenir sous ~650 Ko
-  // (limite Firestore : 1 Mo par document, et le base64 ajoute un tiers).
-  const TAILLE_MAX = 650 * 1024;
+  // Réduit la photo à 2048 px (puis 1600, 1280 si besoin) en baissant la qualité jusqu'à tenir sous 700 Ko :
+  // vise une photo de 600-700 Ko. Plafond imposé par Firestore : 1 Mo par document et le base64 ajoute
+  // un tiers (700 Ko → ~956 000 caractères, sous la limite de 1 000 000 des règles).
+  const TAILLE_MAX = 700 * 1024;
   function dessiner(fichier, maxCote) {
     return new Promise((ok, ko) => {
       const img = new Image();
@@ -558,9 +573,10 @@
   }
   const versJpeg = (c, q) => new Promise((ok, ko) => c.toBlob(b => b ? ok(b) : ko(new Error('compression impossible')), 'image/jpeg', q));
   async function compresser(fichier) {
-    for (const cote of [1600, 1280]) {
+    const essais = [[2048, [0.9, 0.86, 0.82, 0.78, 0.72]], [1600, [0.82, 0.72, 0.62]], [1280, [0.72, 0.6, 0.5]]];
+    for (const [cote, qualites] of essais) {
       const c = await dessiner(fichier, cote);
-      for (const q of [0.82, 0.72, 0.62, 0.5]) {
+      for (const q of qualites) {
         const b = await versJpeg(c, q);
         if (b.size <= TAILLE_MAX) return b;
       }

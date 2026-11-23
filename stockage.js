@@ -185,7 +185,12 @@
             S.onFileChange && S.onFileChange();
           } catch (e) {
             // Photo d'une visite archivée déjà présente sur le serveur : elle est protégée (réécriture refusée), rien à renvoyer
-            if (e && e.code === 'permission-denied') { m.envoye = true; await majMeta(m); continue; }
+            // On le vérifie avant de la déclarer envoyée : un refus peut aussi venir d'une connexion expirée
+            // (code équipe changé…), et la copie du téléphone ne doit alors pas être libérable.
+            if (e && e.code === 'permission-denied') {
+              const protegee = await db.collection('archives_cles').doc(m.cle).get().then(d => d.exists).catch(() => false);
+              if (protegee) { m.envoye = true; await majMeta(m); continue; }
+            }
             console.warn('Envoi photo reporté', e); break;
           }
         }

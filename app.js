@@ -49,7 +49,7 @@
 
   // ---------------- Démarrage ----------------
   S.init();
-  // Écran d'accueil : le prénom (affiché sur les réservations, visites, journal)
+  // Écran d'accueil : le prénom (affiché sur les visites et le journal)
   // + en ligne, le code équipe (mot de passe du compte partagé COMPTE_EQUIPE).
   {
     const em = $('#cx-email'), mdp = $('#cx-mdp');
@@ -151,8 +151,7 @@
   function statutVisuel(v) {
     if (!v) return 'afaire';
     if (v.statut === 'fait') return PROBLEMES.includes(v.etat) ? 'probleme' : 'fait';
-    if (v.statut === 'reserve') return 'reserve';
-    return 'afaire';
+    return 'afaire';   // les anciennes réservations (fonction retirée) comptent comme « à faire »
   }
 
   function icone(r, v) {
@@ -182,8 +181,7 @@
     // Progression (sur les types affichés)
     const cibles = REPERES.filter(r => filtre[r.t]);
     const faits = cibles.filter(r => visites[r.id] && visites[r.id].statut === 'fait').length;
-    const reserves = cibles.filter(r => visites[r.id] && visites[r.id].statut === 'reserve').length;
-    $('#prog-texte').textContent = `${faits} / ${cibles.length} visités · ${reserves} réservés`;
+    $('#prog-texte').textContent = `${faits} / ${cibles.length} visités`;
     $('#prog-rempli').style.width = (cibles.length ? 100 * faits / cibles.length : 0) + '%';
     if (ouvert) afficherFiche(ouvert, true);
     if (!$('#liste').hidden) remplirListe();
@@ -217,7 +215,6 @@
     ouvert = id;
     const v = visites[id] || {};
     const sv = statutVisuel(visites[id]);
-    const moi = S.nom();
     const photos = (v.photos || []);
     // Les photos sont sur le téléphone qui les a prises : on affiche celles présentes ici
     const urls = {};
@@ -231,7 +228,6 @@
 
     const libStatut = {
       afaire: 'À faire',
-      reserve: `Réservé par ${esc(v.reservePar || '?')}`,
       fait: `Visite terminée par ${esc(v.visitePar || '?')} le ${fmtDate(v.visiteLe)}`,
       probleme: `${esc(ETAT_LIB[v.etat] || '')} – constaté par ${esc(v.visitePar || '?')} le ${fmtDate(v.visiteLe)}`
     }[sv];
@@ -264,10 +260,7 @@
         <a class="btn fiche-ign" href="${esc(r.u)}" target="_blank" rel="noopener">📄 Ouvrir la fiche IGN originale</a>
       </div>
       <div class="actions">
-        <a class="btn" href="https://www.google.com/maps/dir/?api=1&destination=${r.lat},${r.lon}&travelmode=driving" target="_blank" rel="noopener">🧭 Itinéraire</a>
-        ${sv === 'afaire' ? `<button class="btn" id="b-reserver">✋ Je le prends</button>` : ''}
-        ${sv === 'reserve' ? `<button class="btn" id="b-liberer">${v.reservePar === moi ? 'Libérer' : 'Libérer (' + esc(v.reservePar) + ')'}</button>` : ''}
-      </div>
+        <a class="btn" href="https://www.google.com/maps/dir/?api=1&destination=${r.lat},${r.lon}&travelmode=driving" target="_blank" rel="noopener">🧭 Itinéraire</a>      </div>
       <details class="ign">
         <summary>Données IGN</summary>
         <p class="pre">${esc(r.l)}</p>
@@ -309,8 +302,6 @@
     majDistanceFiche();
 
     const on = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
-    on('#b-reserver', () => S.maj(id, { statut: 'reserve', reservePar: moi, reserveLe: new Date().toISOString() }, 'Réservé').then(() => toast('Repère réservé')));
-    on('#b-liberer', () => S.effacerChamps(id, ['statut', 'reservePar', 'reserveLe'], 'Réservation libérée' + (v.reservePar && v.reservePar !== moi ? ' (était à ' + v.reservePar + ')' : '')).then(() => toast('Réservation libérée')));
     document.querySelectorAll('#fiche .photo-ajout').forEach(b => b.onclick = () => {
       const inp = $('#input-photo');
       inp.dataset.id = id; inp.dataset.role = b.dataset.role;
@@ -386,11 +377,8 @@
     e.target.value = '';
     if (!id || !fichiers.length) return;
     toast('Traitement de ' + fichiers.length + ' photo(s)…');
-    // Près / loin : une seule photo par repère, la nouvelle remplace l'ancienne
-    if (role !== 'autre') {
-      for (const p of ((visites[id] || {}).photos || []).filter(p => p.role === role)) await S.supprimerPhoto(id, p);
-    }
-    const nouvelles = [];
+    // On prépare d'abord les nouvelles photos : l'ancienne n'est retirée que si la nouvelle est prête
+    const pretes = [];
     for (const f of (role === 'autre' ? fichiers : fichiers.slice(0, 1))) {
       try {
         const blob = await compresser(f);
@@ -406,13 +394,21 @@
           if (ex && ex.gps) { meta.gpsPhoto = ex.gps; meta.ecartPhoto = Math.round(distance(ex.gps, PAR_ID[id])); }
           if (ex && ex.date) meta.datePhoto = ex.date;
         } catch (e) { console.warn('EXIF illisible', e); }
+        pretes.push({ blob, meta });
+      } catch (err) { console.error(err); toast('Photo non enregistrée : ' + err.message); }
+    }
+    if (!pretes.length) return;
+    // Près / loin : une seule photo par repère, la nouvelle remplace l'ancienne
+    if (role !== 'autre') {
+      for (const p of ((visites[id] || {}).photos || []).filter(p => p.role === role)) await S.supprimerPhoto(id, p);
+    }
+    const nouvelles = [];
+    for (const { blob, meta } of pretes) {
+      try {
         const cle = await S.ajouterPhoto(id, blob, meta);
         if (cle) nouvelles.push(cle);
       } catch (err) { console.error(err); toast('Photo non enregistrée : ' + err.message); }
     }
-    // Un repère « à faire » sur lequel on prend une photo passe en « réservé » pour éviter un doublon de déplacement
-    const v = visites[id];
-    if (!v || !v.statut) S.maj(id, { statut: 'reserve', reservePar: S.nom(), reserveLe: new Date().toISOString() }, 'Réservé (photo prise)');
     afficherFiche(id);
     majEnvoi();
     toast(ROLES[role] + (S.demo ? ' enregistrée' : ' enregistrée, envoi automatique'));
@@ -619,15 +615,13 @@
   function remplirListe() {
     const q = $('#recherche').value.trim().toLowerCase();
     let items = REPERES.filter(visible).filter(r => !q || r.n.toLowerCase().includes(q) || r.c.toLowerCase().includes(q));
-    const mesRes = $('#liste').dataset.mode === 'mes';
-    if (mesRes) items = items.filter(r => visites[r.id] && visites[r.id].statut === 'reserve' && visites[r.id].reservePar === S.nom());
     items = items.map(r => ({ r, d: maPos ? distance(maPos, r) : null }))
       .sort((a, b) => (a.d == null || b.d == null) ? a.r.c.localeCompare(b.r.c) || a.r.n.localeCompare(b.r.n) : a.d - b.d)
       .slice(0, 80);
-    $('#liste h2').textContent = mesRes ? 'Mes repères réservés' : (maPos ? 'Repères les plus proches' : 'Repères (GPS en attente)');
+    $('#liste h2').textContent = maPos ? 'Repères les plus proches' : 'Repères (GPS en attente)';
     $('#liste-items').innerHTML = items.map(({ r, d }) => {
       const sv = statutVisuel(visites[r.id]);
-      return `<li data-id="${r.id}"><i class="pastille ${sv}"></i><div><b>${esc(r.n)}</b> <small>${r.t}</small><br><small>${esc(r.c)}${visites[r.id] && visites[r.id].reservePar && sv === 'reserve' ? ' · ' + esc(visites[r.id].reservePar) : ''}</small></div><span>${d != null ? fmtDist(d) + ' ' + cap(maPos, r) : ''}</span></li>`;
+      return `<li data-id="${r.id}"><i class="pastille ${sv}"></i><div><b>${esc(r.n)}</b> <small>${r.t}</small><br><small>${esc(r.c)}</small></div><span>${d != null ? fmtDist(d) + ' ' + cap(maPos, r) : ''}</span></li>`;
     }).join('') || '<li>Aucun repère</li>';
     document.querySelectorAll('#liste-items li[data-id]').forEach(li => li.onclick = () => {
       const r = PAR_ID[li.dataset.id];
@@ -653,7 +647,7 @@
       const v = visites[r.id] || {};
       return {
         id: r.id, type: r.t, nom: r.n, commune: r.c, etat_ign: r.e, fiche_ign: r.u,
-        statut: v.statut === 'fait' ? 'visite_terminee' : (v.statut === 'reserve' ? 'reserve' : 'a_faire'),
+        statut: v.statut === 'fait' ? 'visite_terminee' : 'a_faire',
         etat_constate: ETAT_LIB[v.etat] || '', commentaire: v.commentaire || '',
         ciel_gnss: libChamp(CHAMPS[0], v.ciel), acces: libChamp(CHAMPS[1], v.acces),
         conforme_ign: libChamp(CHAMPS[2], v.conforme), menace: libChamp(CHAMPS[3], v.menace),
@@ -675,7 +669,7 @@
       $('#' + b.dataset.ferme).hidden = true;
       if (b.dataset.ferme === 'fiche') ouvert = null;
     });
-    $('#btn-liste').onclick = () => { $('#liste').dataset.mode = ''; $('#fiche').hidden = true; ouvert = null; $('#menu').hidden = true; $('#liste').hidden = false; remplirListe(); };
+    $('#btn-liste').onclick = () => { $('#fiche').hidden = true; ouvert = null; $('#menu').hidden = true; $('#liste').hidden = false; remplirListe(); };
     $('#recherche').oninput = remplirListe;
     $('#btn-menu').onclick = () => { $('#menu').hidden = !$('#menu').hidden; };
     $('#btn-moi').onclick = () => {
@@ -701,7 +695,6 @@
     $('#menu-nom').onchange = () => { localStorage.setItem('nom-terrain', $('#menu-nom').value.trim()); toast('Nom enregistré'); };
     $('#sel-theme').value = localStorage.getItem('theme') || 'auto';
     $('#sel-theme').onchange = (e) => { localStorage.setItem('theme', e.target.value); appliquerTheme(); };
-    $('#btn-mes-reserves').onclick = () => { $('#menu').hidden = true; $('#liste').dataset.mode = 'mes'; $('#liste').hidden = false; remplirListe(); };
     $('#btn-envoyer').onclick =() => { if (!navigator.onLine) { toast('Pas de réseau pour l\'instant'); return; } S.envoyerFile(); toast('Envoi relancé'); };
     $('#btn-liberer').onclick = async () => {
       if (!confirm('Retirer de ce téléphone les photos déjà envoyées ?\n\nElles restent dans l\'appli (téléchargées depuis le serveur quand on les ouvre, avec du réseau).')) return;

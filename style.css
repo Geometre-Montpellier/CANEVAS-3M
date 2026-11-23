@@ -235,3 +235,7 @@ details.ign summary { cursor: pointer; font-weight: 600; color: var(--bleu); }
 dl.ign-fiche { margin: 6px 0; font-size: .85rem; }
 dl.ign-fiche dt { color: var(--gris); margin-top: 6px; }
 dl.ign-fiche dd { margin: 0; font-weight: 600; }
+/* Repère dont la fiche n'existe plus sur le site IGN : pointeur blanc (tant qu'il est à faire) */
+.mq-rond.s-sansfiche { background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.6); }
+.mq-tri.s-sansfiche { border-bottom-color: #fff; }
+.btn.fiche-absente { cursor: default; color: var(--gris); border-style: dashed; }
